@@ -1,0 +1,14 @@
+date,product,category,quantity,unit_price,revenue
+2026-09-01,Enterprise AI Copilot,Software,15,450,6750
+2026-09-03,Cloud Analytics Suite,Software,12,350,4200
+2026-09-05,Neural Edge Gateway,Hardware,8,850,6800
+2026-09-08,Data Pipeline Pro,Software,20,250,5000
+2026-09-10,Security Shield AI,Security,25,300,7500
+2026-09-12,Enterprise AI Copilot,Software,10,450,4500
+2026-09-15,Vector Search Appliance,Hardware,5,1200,6000
+2026-09-18,Security Shield AI,Security,15,300,4500
+2026-09-20,Cloud Analytics Suite,Software,18,350,6300
+2026-09-22,AutoML Workstation,Hardware,4,1500,6000
+2026-09-25,Data Pipeline Pro,Software,16,250,4000
+2026-09-28,Enterprise AI Copilot,Software,12,450,5400
+
