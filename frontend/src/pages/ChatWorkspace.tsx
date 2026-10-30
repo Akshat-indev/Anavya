@@ -195,6 +195,19 @@ export const ChatWorkspace: React.FC = () => {
       const actionName = meta.actionName || '';
       const { appName } = resolveAppIdentity(meta.appName || actionName || msg.senderName);
       const isEditing = editingApprovalId === approvalId;
+      const resolvedMsg = approvalId
+        ? messages.find(
+            (m) =>
+              (m.approvalId || m.metadata?.approvalId) === approvalId &&
+              (m.metadata?.type === 'approval_executed' || m.metadata?.type === 'approval_rejected')
+          )
+        : undefined;
+      const resolvedState: 'sent' | 'rejected' | null = resolvedMsg
+        ? resolvedMsg.metadata?.type === 'approval_rejected'
+          ? 'rejected'
+          : 'sent'
+        : null;
+      const finalArgs = args;
       const isEmail =
         appName === 'Gmail' ||
         actionName === 'gmail.send_message' ||
@@ -221,10 +234,20 @@ export const ChatWorkspace: React.FC = () => {
                   </span>
                 </div>
               </div>
-              {renderStatusPill('waiting_for_approval')}
+              {resolvedState === 'sent'
+                ? renderStatusPill('completed')
+                : resolvedState === 'rejected'
+                ? renderStatusPill('cancelled')
+                : renderStatusPill('waiting_for_approval')}
             </div>
 
-            <p className="text-xs text-[#D0D0D0] mb-3">{msg.content}</p>
+            <p className="text-xs text-[#D0D0D0] mb-3">
+              {resolvedState === 'sent'
+                ? `✓ ${resolvedMsg?.content || 'Approved and sent.'}`
+                : resolvedState === 'rejected'
+                ? 'Rejected — this action was not sent.'
+                : msg.content}
+            </p>
 
             {isEditing ? (
               <div className="bg-[#1A1A1A] border border-[#383838] rounded-xl p-3.5 mb-3 space-y-2.5">
@@ -304,7 +327,7 @@ export const ChatWorkspace: React.FC = () => {
               )
             )}
 
-            {approvalId && (
+            {approvalId && !resolvedState && (
               <div className="flex items-center flex-wrap gap-2.5 pt-1">
                 <button
                   disabled={isSending}

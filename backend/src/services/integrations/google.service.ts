@@ -41,11 +41,7 @@ export class GoogleIntegrationService {
   }
 
   public generateLoginAuthUrl(): { authUrl: string; state: string; configured: boolean } {
-    const state = `login.${crypto.randomBytes(16).toString('hex')}`;
-    oauthStateStore.set(state, {
-      userId: 'login',
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    });
+    const state = this.createOAuthState('login');
 
     if (!this.isOAuthConfigured()) {
       return {
@@ -55,8 +51,7 @@ export class GoogleIntegrationService {
       };
     }
 
-    // Use only non-sensitive OpenID/profile/email scopes for Login so Google NEVER
-    // displays the "Google hasn't verified this app" warning screen on sign-in.
+    // Login authorizes all workspace scopes in one consent (shown only on first sign-in).
     const params = new URLSearchParams({
       client_id: env.GOOGLE_CLIENT_ID,
       redirect_uri: env.GOOGLE_REDIRECT_URI,
@@ -64,7 +59,7 @@ export class GoogleIntegrationService {
       scope: GOOGLE_SCOPES.join(' '),
       access_type: 'offline',
       include_granted_scopes: 'true',
-      prompt: 'consent select_account',
+      prompt: 'select_account',
       state,
     });
 
@@ -76,11 +71,7 @@ export class GoogleIntegrationService {
   }
 
   public generateAuthUrl(userId: string, additionalScopes?: string[]): { authUrl: string; state: string; configured: boolean } {
-    const state = `${userId}.${crypto.randomBytes(16).toString('hex')}`;
-    oauthStateStore.set(state, {
-      userId,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    });
+    const state = this.createOAuthState(userId);
 
     if (!this.isOAuthConfigured()) {
       return {
@@ -110,10 +101,27 @@ export class GoogleIntegrationService {
     };
   }
 
+  private createOAuthState(userId: string): string {
+    // Stateless signed state (survives Render restarts / multiple instances)
+    return jwt.sign({ uid: userId, n: crypto.randomBytes(8).toString('hex') }, env.JWT_SECRET, {
+      expiresIn: '15m',
+    });
+  }
+
   public validateOAuthState(state: string): string {
+    try {
+      const payload: any = jwt.verify(state, env.JWT_SECRET);
+      if (payload?.uid) return String(payload.uid);
+    } catch (_e) {
+      // fall through to legacy in-memory check
+    }
     const entry = oauthStateStore.get(state);
     if (!entry) {
-      throw new AppError('Invalid or expired Google OAuth state parameter', 400, 'INVALID_OAUTH_STATE');
+      throw new AppError(
+        'Google sign-in session expired. Please go back and click "Continue with Google" again.',
+        400,
+        'INVALID_OAUTH_STATE'
+      );
     }
     oauthStateStore.delete(state);
     if (Date.now() > entry.expiresAt) {
@@ -1019,13 +1027,20 @@ export class GoogleIntegrationService {
       throw new AppError(`Invalid recipient email address: '${recipient}'`, 400, 'INVALID_RECIPIENT_EMAIL');
     }
 
+    const encodedSubject = /^[\x20-\x7E]*$/.test(subject)
+      ? subject.replace(/[\r\n]/g, ' ')
+      : `=?UTF-8?B?${Buffer.from(subject.replace(/[\r\n]/g, ' '), 'utf-8').toString('base64')}?=`;
+    const bodyB64 = (Buffer.from(bodyText, 'utf-8').toString('base64').match(/.{1,76}/g) || []).join('\r\n');
+
     const mimeMessage = [
       `To: ${recipient.trim()}`,
-      `Subject: ${subject.replace(/[\r\n]/g, ' ')}`,
+      `Subject: ${encodedSubject}`,
+      `Date: ${new Date().toUTCString()}`,
       'MIME-Version: 1.0',
       'Content-Type: text/plain; charset="UTF-8"',
+      'Content-Transfer-Encoding: base64',
       '',
-      bodyText,
+      bodyB64,
     ].join('\r\n');
 
     return Buffer.from(mimeMessage, 'utf-8')
@@ -1207,6 +1222,7 @@ export class GoogleIntegrationService {
       emailSent: true,
       messageId: String(data.id || 'msg_sent'),
       threadId: String(data.threadId || ''),
+      labelIds: data.labelIds || [],
       recipient,
       subject,
       sentAt: new Date().toISOString(),

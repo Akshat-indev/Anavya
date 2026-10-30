@@ -433,7 +433,8 @@ describe('TaskForce AI Backend MVP — Complete Verification Suite', () => {
         .get('/api/v1/integrations/google/connect')
         .set('Authorization', `Bearer ${user1Token}`);
       expect(connectRes.status).toBe(200);
-      expect(connectRes.body.data.state).toContain(user1Id);
+      expect(typeof connectRes.body.data.state).toBe('string');
+      expect(connectRes.body.data.state.length).toBeGreaterThan(20);
 
       // Save encrypted Google tokens for User 1
       const { googleIntegrationService } = await import(
