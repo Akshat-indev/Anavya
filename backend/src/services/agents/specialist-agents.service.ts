@@ -10,6 +10,43 @@ import { toolRegistryService } from '../tools/tool-registry.service';
 import { realtimeService } from '../realtime/realtime.service';
 import { AppError } from '../../utils/errors';
 
+const SIMPLE_NAME_POOL = [
+  'Aarav Mehta',
+  'Amelia Brooks',
+  'Daniel Carter',
+  'Elena Rossi',
+  'Ibrahim Khan',
+  'Liam Foster',
+  'Maya Patel',
+  'Noah Bennett',
+  'Sofia Nguyen',
+  'Theo Morgan',
+  'Zara Williams',
+  'Jonas Reed',
+];
+
+function createSimpleNamesDocument(objective: string): string | null {
+  const lower = objective.toLowerCase();
+  if (
+    !/\b(random|list|names?)\b/.test(lower) ||
+    /\b(report|summary|analysis|executive|professional|formal)\b/.test(lower)
+  ) {
+    return null;
+  }
+
+  const countMatch = lower.match(/\b(\d+)\s+names?\b/);
+  const count = Math.min(Math.max(Number(countMatch?.[1] || 10), 1), 50);
+  const names = [...SIMPLE_NAME_POOL];
+  for (let i = names.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [names[i], names[j]] = [names[j], names[i]];
+  }
+  while (names.length < count) {
+    names.push(`Name ${names.length + 1}`);
+  }
+  return `# Names\n\n${names.slice(0, count).join('\n\n')}`;
+}
+
 export interface AgentConfigurationSpec {
   name: string;
   role: AgentRole;
@@ -1013,13 +1050,15 @@ export class SpecialistAgentService {
       }
 
       if (step.requiredTools.includes('google_docs.create_document')) {
+        const simpleDocumentContent = createSimpleNamesDocument(context.objective);
         const docTitle =
-          step.toolArguments?.title || `Anavya Report - ${new Date().toISOString().slice(0, 10)}`;
+          (simpleDocumentContent ? 'Names' : step.toolArguments?.title) ||
+          `Anavya Report - ${new Date().toISOString().slice(0, 10)}`;
         const docOutput = await toolRegistryService.executeTool(
           'google_docs.create_document',
           {
             title: docTitle,
-            content: aiResponse.text,
+            content: simpleDocumentContent || aiResponse.text,
           },
           {
             userId: context.userId,
@@ -1034,7 +1073,7 @@ export class SpecialistAgentService {
           fileId: docOutput.workspaceFileId || docOutput.documentId,
           filename: `${docTitle}.gdoc`,
           fileType: 'google_doc',
-          size: aiResponse.text.length,
+          size: (simpleDocumentContent || aiResponse.text).length,
           downloadUrl: docOutput.documentUrl,
           externalUrl: docOutput.documentUrl,
           documentId: docOutput.documentId,

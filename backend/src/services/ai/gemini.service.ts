@@ -241,7 +241,9 @@ export class GeminiService {
     const wantsGoogleSheets =
       lower.includes('google sheet') ||
       (lower.includes('spreadsheet') && integrationStatus?.googleConnected);
-    const wantsGoogleDocs = lower.includes('google doc');
+    const wantsDocumentCreation =
+      /\b(create|make|write|generate)\b[\s\S]{0,40}\b(doc|document)\b/.test(lower);
+    const wantsGoogleDocs = lower.includes('google doc') || wantsDocumentCreation;
     const wantsGmail =
       lower.includes('gmail') ||
       (lower.includes('email') && integrationStatus?.googleConnected);
@@ -301,13 +303,18 @@ export class GeminiService {
       }
 
       if (wantsGoogleDocs) {
+        const simpleDocumentRequest =
+          /\b(random|list|names?)\b/.test(lower) &&
+          !/\b(report|summary|analysis|executive|professional|formal)\b/.test(lower);
         steps.push({
           sequence: seq++,
           agentType: 'writer',
-          description: 'Generate a professional sales performance report and create a Google Doc in the connected Google Workspace',
+          description: simpleDocumentRequest
+            ? 'Create a simple document containing only the requested names'
+            : 'Generate a professional sales performance report and create a Google Doc in the connected Google Workspace',
           requiredTools: ['google_docs.create_document'],
           toolArguments: {
-            title: 'Sales Performance & Top Products Report',
+            title: simpleDocumentRequest ? 'Names' : 'Sales Performance & Top Products Report',
           },
         });
       } else if (
@@ -466,6 +473,7 @@ Rules:
 2. If the user asks to create an Excel / spreadsheet / Google Sheet, use "google_sheets.create_spreadsheet" with agentType "analyst" or "writer", and include realistic header + data rows in toolArguments.values!
 3. If the user asks to edit/update a spreadsheet, use "google_sheets.append_rows" or "google_sheets.update_range".
 4. If the user asks to create a Google Doc or write a document in Drive, use "google_docs.create_document" or "google_drive.upload_file" with agentType "writer".
+5. Match the requested complexity exactly. For a simple request such as "create a doc with names" or "random 10 names", create only a short title and the requested names. Do not add an executive summary, date, author, identifiers, classification, administrative notes, fabricated metadata, or next steps unless explicitly requested.
 
 Return strictly JSON matching this schema:
 {
