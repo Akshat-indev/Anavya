@@ -61,6 +61,8 @@ export const ChatWorkspace: React.FC = () => {
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
   const activeConv = conversations.find((c) => c.id === activeConversationId);
+  const agentLabel = (role?: string) =>
+    role ? `${role.charAt(0).toUpperCase()}${role.slice(1)} Agent` : 'Agent';
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -607,7 +609,7 @@ export const ChatWorkspace: React.FC = () => {
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-[#EF6464]" />
                 <span className="text-xs font-semibold text-[#EF6464]">
-                  Execution issue
+                  {agentLabel(msg.agentRole)} issue
                 </span>
               </div>
               {renderStatusPill('failed')}
@@ -673,7 +675,7 @@ export const ChatWorkspace: React.FC = () => {
             <div className="flex items-center gap-2 min-w-0">
               <AgentAvatar role={msg.agentRole || 'coordinator'} size="sm" />
               <span className="text-xs font-semibold text-[#F5F5F5]">
-                Anavya
+                {agentLabel(msg.agentRole)}
               </span>
               {meta.subtitle && (
                 <span className="text-[11px] text-[#A0A0A0] truncate max-w-[260px]">
@@ -826,7 +828,7 @@ export const ChatWorkspace: React.FC = () => {
             <div className="my-3.5 max-w-[84%] bg-[#262626] border border-[#383838] rounded-2xl p-4 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <Loader2 className="w-4 h-4 text-[#E9A23B] animate-spin shrink-0" />
-                <span className="text-xs text-[#F5F5F5]">Working on your request...</span>
+                <span className="text-xs text-[#F5F5F5]">{liveBanner}</span>
               </div>
               {renderStatusPill('running')}
             </div>

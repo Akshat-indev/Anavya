@@ -244,6 +244,10 @@ export class GeminiService {
     const wantsDocumentCreation =
       /\b(create|make|write|generate)\b[\s\S]{0,40}\b(doc|document)\b/.test(lower);
     const wantsGoogleDocs = lower.includes('google doc') || wantsDocumentCreation;
+    const wantsCreativeWriting =
+      /\b(write|compose|create|make|generate)\b[\s\S]{0,30}\b(poem|poetry|story|essay|letter|lyrics|script)\b/.test(
+        lower
+      );
     const wantsGmail =
       lower.includes('gmail') ||
       (lower.includes('email') && integrationStatus?.googleConnected);
@@ -316,6 +320,14 @@ export class GeminiService {
           toolArguments: {
             title: simpleDocumentRequest ? 'Names' : 'Sales Performance & Top Products Report',
           },
+        });
+      } else if (wantsCreativeWriting) {
+        steps.push({
+          sequence: seq++,
+          agentType: 'writer',
+          description: 'Create the requested creative writing in the requested format and length',
+          requiredTools: [],
+          toolArguments: {},
         });
       } else if (
         steps.length > 0 &&
@@ -473,7 +485,7 @@ Rules:
 2. If the user asks to create an Excel / spreadsheet / Google Sheet, use "google_sheets.create_spreadsheet" with agentType "analyst" or "writer", and include realistic header + data rows in toolArguments.values!
 3. If the user asks to edit/update a spreadsheet, use "google_sheets.append_rows" or "google_sheets.update_range".
 4. If the user asks to create a Google Doc or write a document in Drive, use "google_docs.create_document" or "google_drive.upload_file" with agentType "writer".
-5. Match the requested complexity exactly. For a simple request such as "create a doc with names" or "random 10 names", create only a short title and the requested names. Do not add an executive summary, date, author, identifiers, classification, administrative notes, fabricated metadata, or next steps unless explicitly requested.
+5. Match the requested complexity and format exactly. For a poem, story, essay, letter, lyrics, or other creative request, return only the requested creative work unless the user asks for explanation or metadata. For a simple document request, create only the requested content. Do not add an executive summary, date, author, identifiers, classification, administrative notes, fabricated metadata, or next steps unless explicitly requested.
 
 Return strictly JSON matching this schema:
 {
@@ -641,7 +653,7 @@ User Memories / Preferences: ${JSON.stringify(context.memories)}
 Previous Agent Outputs: ${JSON.stringify(context.previousOutputs)}
 Deterministic Tool Outputs: ${JSON.stringify(context.toolResults)}
 
-Provide a clear, thorough, professional response for your role (${agentRole}). Do not invent fake sources. Rely on the deterministic tool outputs provided.`;
+Provide the requested output for your role (${agentRole}). Match the user's requested format, tone, and complexity exactly. Do not wrap creative writing or simple content in a report template, and do not invent metadata or unrequested sections. Do not invent fake sources. Rely on the deterministic tool outputs provided.`;
 
     return this.generateResponse(compactPrompt, systemInstructions, 2048);
   }

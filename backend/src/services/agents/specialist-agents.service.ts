@@ -10,43 +10,6 @@ import { toolRegistryService } from '../tools/tool-registry.service';
 import { realtimeService } from '../realtime/realtime.service';
 import { AppError } from '../../utils/errors';
 
-const SIMPLE_NAME_POOL = [
-  'Aarav Mehta',
-  'Amelia Brooks',
-  'Daniel Carter',
-  'Elena Rossi',
-  'Ibrahim Khan',
-  'Liam Foster',
-  'Maya Patel',
-  'Noah Bennett',
-  'Sofia Nguyen',
-  'Theo Morgan',
-  'Zara Williams',
-  'Jonas Reed',
-];
-
-function createSimpleNamesDocument(objective: string): string | null {
-  const lower = objective.toLowerCase();
-  if (
-    !/\b(random|list|names?)\b/.test(lower) ||
-    /\b(report|summary|analysis|executive|professional|formal)\b/.test(lower)
-  ) {
-    return null;
-  }
-
-  const countMatch = lower.match(/\b(\d+)\s+names?\b/);
-  const count = Math.min(Math.max(Number(countMatch?.[1] || 10), 1), 50);
-  const names = [...SIMPLE_NAME_POOL];
-  for (let i = names.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [names[i], names[j]] = [names[j], names[i]];
-  }
-  while (names.length < count) {
-    names.push(`Name ${names.length + 1}`);
-  }
-  return `# Names\n\n${names.slice(0, count).join('\n\n')}`;
-}
-
 export interface AgentConfigurationSpec {
   name: string;
   role: AgentRole;
@@ -289,7 +252,7 @@ export const DEFAULT_AGENT_DEFINITIONS: AgentConfigurationSpec[] = [
     intro: 'I turn analytical findings into executive Google Docs, email sequences, and updates.',
     personality: 'Professional',
     systemInstructions:
-      'You are the Writer Agent for Anavya. Generate professional Markdown reports, Google Docs documents, executive summaries, Gmail drafts/messages, and Telegram notifications based on actual findings from Researcher and Analyst agents.',
+      'You are the Writer Agent for Anavya. Create the exact content the user requests, using the requested format, tone, and level of detail. Write creative work such as poems, stories, letters, lyrics, and scripts directly without wrapping it in an executive report. Create documents from the requested content without inventing metadata, recipients, dates, summaries, identifiers, or next steps. Generate reports, Google Docs documents, Gmail drafts/messages, and Telegram notifications when those formats are explicitly requested, based on actual findings from Researcher and Analyst agents.',
     enabledTools: [
       'file_writer',
       'file_reader',
@@ -323,12 +286,12 @@ export const DEFAULT_AGENT_DEFINITIONS: AgentConfigurationSpec[] = [
       saveToMemory: true,
     },
     outputPreferences: {
-      responseLength: 'detailed',
-      outputFormat: 'executive_report',
-      tone: 'Polished & executive',
-      formattingPreferences: 'Executive summary first, followed by structured tables and takeaways',
-      requireSummaries: true,
-      requireCitations: true,
+      responseLength: 'balanced',
+      outputFormat: 'markdown',
+      tone: 'Natural and appropriate to the user request',
+      formattingPreferences: 'Follow the requested format; do not add unrequested sections or metadata',
+      requireSummaries: false,
+      requireCitations: false,
     },
     memorySettings: {
       useConversationContext: true,
@@ -447,7 +410,11 @@ export class SpecialistAgentService {
     const outPrefs = agent.outputPreferences
       ? `\nOutput Format Preferences: Length=${agent.outputPreferences.responseLength || 'balanced'}, Format=${agent.outputPreferences.outputFormat || 'markdown'}, Tone=${agent.outputPreferences.tone || 'Professional'}.`
       : '';
-    return `${baseInstructions}${personality}${outPrefs}`;
+    const formatGuard =
+      role === 'writer'
+        ? '\nWriter constraint: honor the user requested format and complexity exactly. Never turn creative writing or a simple content request into an executive report. Do not add dates, recipients, authors, classifications, summaries, identifiers, distribution notes, or next steps unless requested.'
+        : '';
+    return `${baseInstructions}${personality}${outPrefs}${formatGuard}`;
   }
 
   public checkToolPermission(
@@ -1050,15 +1017,14 @@ export class SpecialistAgentService {
       }
 
       if (step.requiredTools.includes('google_docs.create_document')) {
-        const simpleDocumentContent = createSimpleNamesDocument(context.objective);
         const docTitle =
-          (simpleDocumentContent ? 'Names' : step.toolArguments?.title) ||
-          `Anavya Report - ${new Date().toISOString().slice(0, 10)}`;
+            step.toolArguments?.title ||
+            `Anavya Report - ${new Date().toISOString().slice(0, 10)}`;
         const docOutput = await toolRegistryService.executeTool(
           'google_docs.create_document',
           {
             title: docTitle,
-            content: simpleDocumentContent || aiResponse.text,
+            content: aiResponse.text,
           },
           {
             userId: context.userId,
@@ -1073,7 +1039,7 @@ export class SpecialistAgentService {
           fileId: docOutput.workspaceFileId || docOutput.documentId,
           filename: `${docTitle}.gdoc`,
           fileType: 'google_doc',
-          size: (simpleDocumentContent || aiResponse.text).length,
+          size: aiResponse.text.length,
           downloadUrl: docOutput.documentUrl,
           externalUrl: docOutput.documentUrl,
           documentId: docOutput.documentId,
