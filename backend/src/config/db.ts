@@ -208,6 +208,7 @@ export function createFallbackStore() {
           ...data,
         };
         store[modelName].push(record);
+        saveToDisk();
         return applySelectOrInclude(modelName, record, { include, select });
       },
       createMany: async ({ data }: any) => {
@@ -220,6 +221,7 @@ export function createFallbackStore() {
             ...d,
           });
         }
+        saveToDisk();
         return { count: data.length };
       },
       upsert: async ({ where, update, create, include, select }: any) => {
@@ -230,6 +232,7 @@ export function createFallbackStore() {
             ...update,
             updatedAt: new Date(),
           };
+          saveToDisk();
           return applySelectOrInclude(modelName, store[modelName][idx], { include, select });
         }
         const now = new Date();
@@ -240,6 +243,7 @@ export function createFallbackStore() {
           ...create,
         };
         store[modelName].push(record);
+        saveToDisk();
         return applySelectOrInclude(modelName, record, { include, select });
       },
       findUnique: async ({ where, include, select }: any) => {
@@ -270,6 +274,7 @@ export function createFallbackStore() {
           ...data,
           updatedAt: new Date(),
         };
+        saveToDisk();
         return applySelectOrInclude(modelName, store[modelName][idx], { include, select });
       },
       updateMany: async ({ where, data }: any) => {
@@ -281,17 +286,20 @@ export function createFallbackStore() {
           }
           return item;
         });
+        saveToDisk();
         return { count };
       },
       delete: async ({ where }: any) => {
         const idx = store[modelName].findIndex((item) => matchWhere(item, where));
         if (idx === -1) throw new Error(`${modelName} record not found for delete`);
         const [removed] = store[modelName].splice(idx, 1);
+        saveToDisk();
         return removed;
       },
       deleteMany: async ({ where }: any = {}) => {
         const before = store[modelName].length;
         store[modelName] = store[modelName].filter((item) => !matchWhere(item, where));
+        saveToDisk();
         return { count: before - store[modelName].length };
       },
     };
@@ -328,16 +336,24 @@ export function createFallbackStore() {
 const fallbackInstance = createFallbackStore();
 
 function initPrismaClient(): any {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const PrismaModule = require('@prisma/client');
-    if (PrismaModule && PrismaModule.PrismaClient) {
-      return new PrismaModule.PrismaClient({
-        log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
-      });
+  const dbUrl = (process.env.DATABASE_URL || '').trim();
+  const hasExternalPostgres =
+    dbUrl.startsWith('postgres') &&
+    !dbUrl.includes('localhost:5432') &&
+    !dbUrl.includes('127.0.0.1:5432');
+
+  if (hasExternalPostgres || process.env.USE_POSTGRES === 'true') {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const PrismaModule = require('@prisma/client');
+      if (PrismaModule && PrismaModule.PrismaClient) {
+        return new PrismaModule.PrismaClient({
+          log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
+        });
+      }
+    } catch (_err) {
+      // Fallback to built-in JSON store if Prisma client is not generated
     }
-  } catch (_err) {
-    // Fallback when prisma generate has not yet been run against live DB
   }
   return fallbackInstance.client;
 }
