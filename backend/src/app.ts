@@ -64,11 +64,15 @@ app.use('/api', apiLimiter);
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-// Automatic Google Search Console HTML file verification handler (works for any googleXXXX.html file)
-app.get(/^\/(google[a-zA-Z0-9_-]+\.html)$/, (req, res) => {
+// Google Search Console HTML file verification handler (only matches configured GOOGLE_SITE_VERIFICATION filename)
+app.get(/^\/(google[a-zA-Z0-9_-]+\.html)$/, (req, res, next) => {
   const fileName = req.params[0];
-  res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  return res.status(200).send(`google-site-verification: ${fileName}`);
+  const configuredFile = (process.env.GOOGLE_SITE_VERIFICATION_FILE || process.env.GOOGLE_SITE_VERIFICATION || '').trim();
+  if (configuredFile && (fileName === configuredFile || `${configuredFile}.html` === fileName)) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.status(200).send(`google-site-verification: ${fileName}`);
+  }
+  return next();
 });
 
 // Root status endpoint (always serves HTML with verification meta tag for Googlebot & browsers)
