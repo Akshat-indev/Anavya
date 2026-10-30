@@ -61,10 +61,10 @@ export class GoogleIntegrationService {
       client_id: env.GOOGLE_CLIENT_ID,
       redirect_uri: env.GOOGLE_REDIRECT_URI,
       response_type: 'code',
-      scope: GOOGLE_LOGIN_SCOPES.join(' '),
-      access_type: 'online',
+      scope: GOOGLE_SCOPES.join(' '),
+      access_type: 'offline',
       include_granted_scopes: 'true',
-      prompt: 'select_account',
+      prompt: 'consent select_account',
       state,
     });
 
@@ -342,30 +342,11 @@ export class GoogleIntegrationService {
   }
 
   private async resolveActiveGoogleAccount(userId: string) {
-    let account = await prisma.connectedAccount.findFirst({
+    // Each user only ever uses their OWN Google account tokens (never shared across users).
+    return prisma.connectedAccount.findFirst({
       where: { userId, provider: 'google' },
       include: { oauthToken: true },
     });
-
-    if (
-      (!account || account.status !== 'connected' || !account.oauthToken) &&
-      env.NODE_ENV !== 'test'
-    ) {
-      const workspaceAccount = await prisma.connectedAccount.findFirst({
-        where: {
-          provider: 'google',
-          status: 'connected',
-          oauthToken: { isNot: null },
-        },
-        include: { oauthToken: true },
-        orderBy: { updatedAt: 'desc' },
-      });
-      if (workspaceAccount) {
-        account = workspaceAccount;
-      }
-    }
-
-    return account;
   }
 
   public async getConnectionStatus(userId: string) {

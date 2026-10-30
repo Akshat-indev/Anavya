@@ -310,7 +310,12 @@ ${args.bodyDraft || 'No body draft attached.'}
         { conversationId: convId || undefined, taskId: approval.taskId }
       );
 
-      const resumedTask = await orchestratorService.runPendingTaskSteps(userId, approval.taskId);
+      let resumedTask: any = null;
+      try {
+        resumedTask = await orchestratorService.runPendingTaskSteps(userId, approval.taskId);
+      } catch (resumeErr) {
+        console.error('Failed to resume workflow after approval:', resumeErr);
+      }
 
       return {
         approval: updatedApproval,
@@ -318,10 +323,12 @@ ${args.bodyDraft || 'No body draft attached.'}
         task: resumedTask,
       };
     } catch (err: any) {
+      // Keep the approval pending so the user can fix the problem (e.g. reconnect Google) and retry
       await prisma.approval.update({
         where: { id: approval.id },
         data: {
-          status: 'failed',
+          status: 'pending',
+          resolvedAt: null,
         },
       });
       throw err;

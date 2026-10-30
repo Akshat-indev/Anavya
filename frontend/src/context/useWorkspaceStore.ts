@@ -238,7 +238,20 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         await get().selectConversation(convId);
       }
       await get().fetchConversations();
+    } catch (err: any) {
+      const msg =
+        err?.response?.data?.error?.message ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'Approval failed';
+      if (typeof window !== 'undefined') {
+        window.alert(`Could not complete action: ${msg}`);
+      }
     } finally {
+      const convId = get().activeConversationId;
+      if (convId) {
+        await get().selectConversation(convId);
+      }
       set({ isSending: false, liveBanner: null });
     }
   },
