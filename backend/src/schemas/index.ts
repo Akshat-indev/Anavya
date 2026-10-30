@@ -244,7 +244,13 @@ export const gmailDraftSchema = z.object({
   body: z.string().min(1, 'Email body is required').max(15000),
 });
 
+export const googleQuickConnectSchema = z.object({
+  email: z.string().email('Valid Google Account email is required'),
+  name: z.string().optional(),
+});
+
 export const telegramConnectSchema = z.object({
+  phoneNumber: z.string().min(3, 'Valid Telegram phone number or username is required').optional(),
   botToken: z.string().min(10, 'Valid Telegram Bot token is required').optional(),
   chatId: z.string().optional(),
 });

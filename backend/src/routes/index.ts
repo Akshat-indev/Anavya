@@ -23,6 +23,7 @@ import {
   googleDocsUpdateSchema,
   googleDriveUploadSchema,
   gmailDraftSchema,
+  googleQuickConnectSchema,
   telegramConnectSchema,
   telegramLinkChatSchema,
   telegramSendMessageSchema,
@@ -58,6 +59,9 @@ router.post('/auth/register', validateBody(registerSchema), (req, res, next) =>
 );
 router.post('/auth/login', validateBody(loginSchema), (req, res, next) =>
   authController.login(req, res, next)
+);
+router.get('/auth/google', (req, res, next) =>
+  integrationController.googleAuthLogin(req, res, next)
 );
 router.get('/auth/me', authenticateJWT, (req, res, next) => authController.me(req, res, next));
 

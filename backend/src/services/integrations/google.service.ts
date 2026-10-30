@@ -1,9 +1,13 @@
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { prisma } from '../../config/db';
 import { env } from '../../config/env';
 import { AppError } from '../../utils/errors';
 import { encryptSecret, decryptSecret } from '../../utils/crypto';
 import { workspaceService } from '../workspace/workspace.service';
+import { specialistAgentService } from '../agents/specialist-agents.service';
+import { automationService } from '../automations/automation.service';
 
 const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
@@ -28,6 +32,10 @@ export class GoogleIntegrationService {
         env.GOOGLE_CLIENT_SECRET.trim() !== '' &&
         env.GOOGLE_CLIENT_SECRET !== 'your_google_oauth_client_secret'
     );
+  }
+
+  public generateLoginAuthUrl(): { authUrl: string; state: string; configured: boolean } {
+    return this.generateAuthUrl('login');
   }
 
   public generateAuthUrl(userId: string, additionalScopes?: string[]): { authUrl: string; state: string; configured: boolean } {
@@ -78,7 +86,7 @@ export class GoogleIntegrationService {
   }
 
   public async handleOAuthCallback(code: string, state: string) {
-    const userId = this.validateOAuthState(state);
+    const stateTarget = this.validateOAuthState(state);
 
     if (!this.isOAuthConfigured()) {
       throw new AppError(
@@ -114,7 +122,7 @@ export class GoogleIntegrationService {
     const refreshToken = tokenData.refresh_token;
     const expiresIn = Number(tokenData.expires_in) || 3600;
 
-    let accountEmail = 'connected@googleworkspace.com';
+    let accountEmail = '';
     let accountName = 'Google Workspace Account';
 
     try {
@@ -123,21 +131,68 @@ export class GoogleIntegrationService {
       });
       if (profileRes.ok) {
         const profile: any = await profileRes.json();
-        accountEmail = profile.email || accountEmail;
-        accountName = profile.name || accountEmail;
+        accountEmail = (profile.email || '').toLowerCase().trim();
+        accountName = profile.name || accountEmail || accountName;
       }
     } catch (_e) {
       // Ignore profile fetch error if scope limited
     }
 
-    return this.saveGoogleTokens(userId, {
+    let userId = stateTarget;
+    let isLogin = false;
+    let jwtToken: string | undefined;
+    let userRecord: any;
+
+    if (stateTarget === 'login') {
+      isLogin = true;
+      if (!accountEmail) {
+        throw new AppError('Could not retrieve email from Google OAuth profile', 400, 'GOOGLE_EMAIL_MISSING');
+      }
+
+      let user = await prisma.user.findUnique({ where: { email: accountEmail } });
+      if (!user) {
+        const randomHash = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 10);
+        user = await prisma.user.create({
+          data: {
+            email: accountEmail,
+            passwordHash: randomHash,
+          },
+        });
+        await specialistAgentService.ensureUserDefaultAgents(user.id);
+        await automationService.ensurePredefinedAutomations(user.id);
+      }
+      userId = user.id;
+      userRecord = {
+        id: user.id,
+        email: user.email,
+        createdAt: user.createdAt,
+      };
+      jwtToken = jwt.sign(
+        { id: user.id, email: user.email },
+        env.JWT_SECRET,
+        { expiresIn: env.JWT_EXPIRES_IN as any }
+      );
+    }
+
+    const account = await this.saveGoogleTokens(userId, {
       accessToken,
       refreshToken,
       expiresIn,
-      accountEmail,
+      accountEmail: accountEmail || 'connected@googleworkspace.com',
       accountName,
       scopes: GOOGLE_SCOPES,
     });
+
+    if (isLogin) {
+      return {
+        isLogin: true,
+        token: jwtToken,
+        user: userRecord,
+        account,
+      };
+    }
+
+    return account;
   }
 
   public async saveGoogleTokens(
@@ -231,9 +286,28 @@ export class GoogleIntegrationService {
   public async getConnectionStatus(userId: string) {
     const account = await prisma.connectedAccount.findFirst({
       where: { userId, provider: 'google' },
+      include: { oauthToken: true },
     });
 
-    if (!account || account.status !== 'connected') {
+    if (account && account.oauthToken?.encryptedAccessToken) {
+      try {
+        const raw = decryptSecret(account.oauthToken.encryptedAccessToken);
+        if (raw === 'anavya_quick_google_session') {
+          await this.disconnect(userId);
+          return {
+            connected: false,
+            provider: 'google',
+            oauthConfiguredOnServer: this.isOAuthConfigured(),
+            scopes: GOOGLE_SCOPES,
+            capabilities: ['google_drive', 'google_sheets', 'google_docs', 'gmail'],
+          };
+        }
+      } catch (_e) {
+        // Ignore decrypt error
+      }
+    }
+
+    if (!account || account.status !== 'connected' || !account.oauthToken) {
       return {
         connected: false,
         provider: 'google',
@@ -438,9 +512,8 @@ export class GoogleIntegrationService {
   }
 
   public async downloadDriveFile(userId: string, fileId: string) {
-    const meta = await this.getDriveFileMetadata(userId, fileId);
     const accessToken = await this.getValidAccessToken(userId);
-
+    const meta = await this.getDriveFileMetadata(userId, fileId);
     // Safety check: only allow text, CSV, JSON, Google Docs, or Google Sheets exports
     let downloadUrl = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(fileId)}?alt=media`;
     if (meta.mimeType === 'application/vnd.google-apps.document') {
@@ -542,6 +615,7 @@ export class GoogleIntegrationService {
     return {
       spreadsheets: (data.files || []).map((f: any) => ({
         spreadsheetId: f.id,
+        name: f.name,
         title: f.name,
         modifiedTime: f.modifiedTime,
         url: f.webViewLink || `https://docs.google.com/spreadsheets/d/${f.id}`,
@@ -551,7 +625,6 @@ export class GoogleIntegrationService {
 
   public async readSpreadsheet(userId: string, spreadsheetId: string, range = 'Sheet1!A1:Z500') {
     const accessToken = await this.getValidAccessToken(userId);
-
     const [metaRes, valRes] = await Promise.all([
       fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=spreadsheetId,properties.title,sheets.properties`, {
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -671,7 +744,6 @@ export class GoogleIntegrationService {
     meta?: { conversationId?: string; taskId?: string }
   ) {
     const accessToken = await this.getValidAccessToken(userId);
-
     const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
       method: 'POST',
       headers: {
@@ -929,7 +1001,6 @@ export class GoogleIntegrationService {
   public async createGmailDraft(userId: string, recipient: string, subject: string, bodyText: string) {
     const accessToken = await this.getValidAccessToken(userId);
     const raw = this.buildMimeBase64Url(recipient, subject, bodyText);
-
     const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/drafts', {
       method: 'POST',
       headers: {
@@ -960,7 +1031,6 @@ export class GoogleIntegrationService {
   public async sendGmailMessage(userId: string, recipient: string, subject: string, bodyText: string) {
     const accessToken = await this.getValidAccessToken(userId);
     const raw = this.buildMimeBase64Url(recipient, subject, bodyText);
-
     const res = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
       method: 'POST',
       headers: {

@@ -11,6 +11,21 @@ export class IntegrationController {
   // ==========================================
   // GOOGLE OAUTH & WORKSPACE
   // ==========================================
+  public async googleAuthLogin(_req: Request, res: Response, next: NextFunction) {
+    try {
+      const result = googleIntegrationService.generateLoginAuthUrl();
+      return sendSuccess(
+        res,
+        result,
+        result.configured
+          ? 'Google OAuth login URL generated'
+          : 'Google OAuth client credentials (GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET) are not configured in backend .env yet'
+      );
+    } catch (err) {
+      next(err);
+    }
+  }
+
   public async googleConnect(req: AuthenticatedRequest, res: Response, next: NextFunction) {
     try {
       const userId = req.user!.id;
@@ -41,13 +56,20 @@ export class IntegrationController {
         throw new AppError('Missing authorization code or state in Google callback', 400, 'INVALID_OAUTH_CALLBACK');
       }
 
-      const account = await googleIntegrationService.handleOAuthCallback(code, state);
+      const result: any = await googleIntegrationService.handleOAuthCallback(code, state);
 
       if (req.headers.accept && req.headers.accept.includes('text/html')) {
-        return res.redirect(`${env.FRONTEND_URL}/integrations?google=connected`);
+        if (result?.isLogin && result?.token) {
+          return res.redirect(`${env.FRONTEND_URL}/?token=${encodeURIComponent(result.token)}`);
+        }
+        return res.redirect(`${env.FRONTEND_URL}/plugins?google=connected`);
       }
 
-      return sendSuccess(res, { account }, 'Google Workspace connected successfully');
+      if (result?.isLogin) {
+        return sendSuccess(res, result, 'Signed in with Google OAuth successfully');
+      }
+
+      return sendSuccess(res, { account: result }, 'Google Workspace connected successfully');
     } catch (err) {
       next(err);
     }
@@ -297,7 +319,7 @@ export class IntegrationController {
       const userId = req.user!.id;
       const { botToken, chatId } = req.body || {};
       const result = await telegramIntegrationService.connectBot(userId, botToken, chatId);
-      return sendSuccess(res, result, 'Telegram Bot validated and connected');
+      return sendSuccess(res, result, 'Telegram account connected');
     } catch (err) {
       next(err);
     }

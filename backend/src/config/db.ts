@@ -1,4 +1,8 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+
+const DB_FILE_PATH = path.resolve(process.cwd(), 'workspace', 'anavya_db.json');
 
 export function createFallbackStore() {
   const store: Record<string, any[]> = {
@@ -19,6 +23,40 @@ export function createFallbackStore() {
     oAuthToken: [],
     telegramConnection: [],
   };
+
+  const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+
+  function loadFromDisk() {
+    if (isTestEnv) return;
+    try {
+      if (fs.existsSync(DB_FILE_PATH)) {
+        const raw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
+        const parsed = JSON.parse(raw);
+        for (const k of Object.keys(store)) {
+          if (Array.isArray(parsed[k])) {
+            store[k] = parsed[k];
+          }
+        }
+      }
+    } catch (_e) {
+      // Ignore corrupt/missing file on startup
+    }
+  }
+
+  function saveToDisk() {
+    if (isTestEnv) return;
+    try {
+      const dir = path.dirname(DB_FILE_PATH);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(store, null, 2), 'utf-8');
+    } catch (_e) {
+      // Ignore disk write errors
+    }
+  }
+
+  loadFromDisk();
 
   function matchWhere(item: any, where: any): boolean {
     if (!where) return true;

@@ -11,11 +11,34 @@ import { sendError } from './utils/response';
 
 const app = express();
 
+// Trust Render / reverse proxy headers for rate limiting & HTTPS
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
+
+const allowedOrigins = (env.FRONTEND_URL || '')
+  .split(',')
+  .map((o) => o.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: env.FRONTEND_URL || '*',
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+      const normalizedOrigin = origin.replace(/\/+$/, '');
+      if (
+        allowedOrigins.includes('*') ||
+        allowedOrigins.includes(normalizedOrigin) ||
+        normalizedOrigin.endsWith('.vercel.app') ||
+        normalizedOrigin.startsWith('http://localhost:')
+      ) {
+        return callback(null, true);
+      }
+      return callback(null, true);
+    },
     credentials: true,
   })
 );
@@ -23,7 +46,7 @@ app.use(
 // Rate limiting
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: env.NODE_ENV === 'test' ? 10000 : 250,
+  max: env.NODE_ENV === 'test' ? 10000 : 350,
   standardHeaders: true,
   legacyHeaders: false,
   message: {
@@ -40,6 +63,18 @@ app.use('/api', apiLimiter);
 // Body parsing with reasonable size limits
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
+
+// Root status endpoint (useful for Render health checks & browser visits)
+app.get('/', (_req, res) => {
+  res.json({
+    success: true,
+    name: 'Anavya Autonomous AI Workspace API',
+    tagline: 'Your AI workspace. Your agents. Your work, done.',
+    status: 'online',
+    docs: '/api-docs',
+    health: '/api/v1/health',
+  });
+});
 
 // Swagger OpenAPI Documentation
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
@@ -59,4 +94,3 @@ app.use((req, res) => {
 app.use(errorHandler);
 
 export default app;
-

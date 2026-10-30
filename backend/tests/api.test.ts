@@ -826,5 +826,86 @@ describe('TaskForce AI Backend MVP — Complete Verification Suite', () => {
         global.fetch = originalFetch;
       }
     });
+
+    it('Supports Google OAuth login URL generation and Telegram Bot getUpdates auto-verification', async () => {
+      // 1. Verify Google OAuth login endpoint responds cleanly
+      const gAuth = await request(app).get('/api/v1/auth/google');
+      expect(gAuth.status).toBe(200);
+      expect(gAuth.body.data).toHaveProperty('state');
+
+      // 2. Verify Telegram Bot connection + auto-discovery of chat_id via getUpdates (/start)
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn(async (urlInput: any, init?: any) => {
+        const url = String(urlInput);
+        if (url.includes('api.telegram.org') && url.endsWith('/getMe')) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              result: {
+                id: 998877,
+                username: 'anavya_verify_bot',
+                first_name: 'Anavya Bot',
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        if (url.includes('api.telegram.org') && url.endsWith('/getUpdates')) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              result: [
+                {
+                  update_id: 1,
+                  message: {
+                    chat: {
+                      id: 77665544,
+                      first_name: 'Akshat',
+                      username: 'akshat_tg',
+                    },
+                    text: '/start connect',
+                  },
+                },
+              ],
+            }),
+            { status: 200 }
+          );
+        }
+        if (url.includes('api.telegram.org') && url.endsWith('/sendMessage')) {
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              result: {
+                message_id: 404,
+                date: Math.floor(Date.now() / 1000),
+              },
+            }),
+            { status: 200 }
+          );
+        }
+        return originalFetch(urlInput, init);
+      }) as any;
+
+      try {
+        const tgConnect = await request(app)
+          .post('/api/v1/integrations/telegram/connect')
+          .set('Authorization', `Bearer ${user1Token}`)
+          .send({ botToken: '123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11' });
+        expect(tgConnect.status).toBe(200);
+        expect(tgConnect.body.data.connected).toBe(true);
+        expect(tgConnect.body.data.botUsername).toBe('anavya_verify_bot');
+        expect(tgConnect.body.data.linkedChatId).toBe('77665544');
+
+        const tgSend = await request(app)
+          .post('/api/v1/tools/telegram/send-message')
+          .set('Authorization', `Bearer ${user1Token}`)
+          .send({ text: 'Verified real Telegram notification!' });
+        expect(tgSend.status).toBe(200);
+        expect(tgSend.body.data.delivered).toBe(true);
+        expect(tgSend.body.data.chatId).toBe('77665544');
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
   });
 });
