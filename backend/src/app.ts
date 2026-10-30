@@ -64,9 +64,29 @@ app.use('/api', apiLimiter);
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-// Root status endpoint (useful for Render health checks & browser visits)
-app.get('/', (_req, res) => {
-  res.json({
+// Root status endpoint (useful for Render health checks, browser visits & Google Search Console verification)
+app.get('/', (req, res) => {
+  const verifyMeta = process.env.GOOGLE_SITE_VERIFICATION
+    ? `<meta name="google-site-verification" content="${process.env.GOOGLE_SITE_VERIFICATION}" />`
+    : '';
+  if (req.headers.accept && req.headers.accept.includes('text/html') && verifyMeta) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  ${verifyMeta}
+  <title>Anavya Autonomous AI Workspace</title>
+</head>
+<body style="background:#121212;color:#ECECEC;font-family:sans-serif;padding:40px;text-align:center;">
+  <h1>Anavya Autonomous AI Workspace API</h1>
+  <p>Your AI workspace. Your agents. Your work, done.</p>
+  <p><a href="/privacy" style="color:#E9A23B;">Privacy Policy</a> • <a href="/terms" style="color:#E9A23B;">Terms of Service</a></p>
+</body>
+</html>`);
+  }
+
+  return res.json({
     success: true,
     name: 'Anavya Autonomous AI Workspace API',
     tagline: 'Your AI workspace. Your agents. Your work, done.',

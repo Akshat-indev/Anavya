@@ -9,6 +9,12 @@ import { workspaceService } from '../workspace/workspace.service';
 import { specialistAgentService } from '../agents/specialist-agents.service';
 import { automationService } from '../automations/automation.service';
 
+const GOOGLE_LOGIN_SCOPES = [
+  'openid',
+  'https://www.googleapis.com/auth/userinfo.email',
+  'https://www.googleapis.com/auth/userinfo.profile',
+];
+
 const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/spreadsheets',
   'https://www.googleapis.com/auth/documents',
@@ -35,7 +41,34 @@ export class GoogleIntegrationService {
   }
 
   public generateLoginAuthUrl(): { authUrl: string; state: string; configured: boolean } {
-    return this.generateAuthUrl('login');
+    const state = `login.${crypto.randomBytes(16).toString('hex')}`;
+    oauthStateStore.set(state, {
+      userId: 'login',
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    if (!this.isOAuthConfigured()) {
+      return {
+        authUrl: '',
+        state,
+        configured: false,
+      };
+    }
+
+    const params = new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      redirect_uri: env.GOOGLE_REDIRECT_URI,
+      response_type: 'code',
+      scope: GOOGLE_LOGIN_SCOPES.join(' '),
+      prompt: 'select_account',
+      state,
+    });
+
+    return {
+      authUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
+      state,
+      configured: true,
+    };
   }
 
   public generateAuthUrl(userId: string, additionalScopes?: string[]): { authUrl: string; state: string; configured: boolean } {
@@ -172,6 +205,12 @@ export class GoogleIntegrationService {
         env.JWT_SECRET,
         { expiresIn: env.JWT_EXPIRES_IN as any }
       );
+
+      return {
+        isLogin: true,
+        token: jwtToken,
+        user: userRecord,
+      };
     }
 
     const account = await this.saveGoogleTokens(userId, {
@@ -182,15 +221,6 @@ export class GoogleIntegrationService {
       accountName,
       scopes: GOOGLE_SCOPES,
     });
-
-    if (isLogin) {
-      return {
-        isLogin: true,
-        token: jwtToken,
-        user: userRecord,
-        account,
-      };
-    }
 
     return account;
   }
