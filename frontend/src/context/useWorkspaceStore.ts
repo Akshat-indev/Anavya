@@ -62,6 +62,7 @@ interface WorkspaceStore {
   workspaceFiles: any[];
   isSending: boolean;
   liveBanner: string | null;
+  chatError: string | null;
 
   setAuth: (user: UserProfile, token: string) => void;
   logout: () => void;
@@ -102,6 +103,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   workspaceFiles: [],
   isSending: false,
   liveBanner: null,
+  chatError: null,
 
   setAuth: (user, token) => {
     localStorage.setItem('taskforce_jwt', token);
@@ -142,6 +144,7 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
   selectConversation: async (id) => {
     set({ activeConversationId: id });
     const res = await api.get(`/chat/conversations/${id}`);
+    if (get().activeConversationId !== id) return;
     const conv = res.data.data.conversation;
     set({
       messages: conv.messages || [],
@@ -198,7 +201,8 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
 
     set({
       isSending: true,
-      liveBanner: 'Coordinator Agent is analyzing your objective & delegating to specialists...',
+      chatError: null,
+      liveBanner: 'Working on your request...',
       messages: [...get().messages, optimisticMsg],
     });
 
@@ -215,6 +219,17 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
         activeTasks: updatedConv.tasks || [],
       });
       await get().fetchConversations();
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.error?.message ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'The message could not be processed. Please try again.';
+      set((state) => ({
+        messages: state.messages.filter((messageItem) => messageItem.id !== tempId),
+        chatError: message,
+      }));
+      await get().selectConversation(convId);
     } finally {
       set({ isSending: false, liveBanner: null });
     }
@@ -282,4 +297,3 @@ export const useWorkspaceStore = create<WorkspaceStore>((set, get) => ({
     }
   },
 }));
-

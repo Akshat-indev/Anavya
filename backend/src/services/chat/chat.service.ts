@@ -19,7 +19,7 @@ export class ChatService {
         status: 'idle',
       },
       include: {
-        messages: { orderBy: { createdAt: 'asc' } },
+        messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
         tasks: true,
       },
     });
@@ -41,7 +41,7 @@ export class ChatService {
       orderBy: { updatedAt: 'desc' },
       include: {
         messages: {
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           take: 1,
         },
         tasks: {
@@ -68,7 +68,7 @@ export class ChatService {
     const conversation = await prisma.chatConversation.findFirst({
       where: { id: conversationId, userId },
       include: {
-        messages: { orderBy: { createdAt: 'asc' } },
+        messages: { orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] },
         tasks: { orderBy: { createdAt: 'desc' } },
       },
     });
@@ -93,27 +93,28 @@ export class ChatService {
       throw new AppError('Conversation not found or access denied', 404, 'CONVERSATION_NOT_FOUND');
     }
 
-    const updated = await prisma.chatConversation.update({
-      where: { id: existing.id },
-      data: {
-        ...(updates.title ? { title: updates.title.trim() } : {}),
-        ...(updates.agentRole ? { agentRole: updates.agentRole } : {}),
-      },
-    });
-
-    if (updates.title && updates.title.trim() !== existing.title) {
-      await prisma.chatMessage.create({
+    return prisma.$transaction(async (tx: any) => {
+      const updated = await tx.chatConversation.update({
+        where: { id: existing.id },
         data: {
-          conversationId,
-          senderType: 'system',
-          senderName: 'System',
-          content: `Renamed to ${updates.title.trim()}`,
-          metadata: { type: 'rename_event', newTitle: updates.title.trim() } as any,
+          ...(updates.title ? { title: updates.title.trim() } : {}),
+          ...(updates.agentRole ? { agentRole: updates.agentRole } : {}),
         },
       });
-    }
 
-    return updated;
+      if (updates.title && updates.title.trim() !== existing.title) {
+        await tx.chatMessage.create({
+          data: {
+            conversationId,
+            senderType: 'system',
+            senderName: 'System',
+            content: `Renamed to ${updates.title.trim()}`,
+            metadata: { type: 'rename_event', newTitle: updates.title.trim() } as any,
+          },
+        });
+      }
+      return updated;
+    });
   }
 
   public async deleteConversation(userId: string, conversationId: string) {
@@ -125,8 +126,10 @@ export class ChatService {
       throw new AppError('Conversation not found or access denied', 404, 'CONVERSATION_NOT_FOUND');
     }
 
-    await prisma.chatMessage.deleteMany({ where: { conversationId } });
-    await prisma.chatConversation.delete({ where: { id: conversationId } });
+    await prisma.$transaction(async (tx: any) => {
+      await tx.chatMessage.deleteMany({ where: { conversationId } });
+      await tx.chatConversation.delete({ where: { id: conversationId } });
+    });
 
     return { deletedId: conversationId };
   }
@@ -206,4 +209,3 @@ export class ChatService {
 }
 
 export const chatService = new ChatService();
-

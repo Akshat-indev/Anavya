@@ -22,6 +22,7 @@ export function createFallbackStore() {
     connectedAccount: [],
     oAuthToken: [],
     telegramConnection: [],
+    scheduledTask: [],
   };
 
   const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
@@ -45,15 +46,13 @@ export function createFallbackStore() {
 
   function saveToDisk() {
     if (isTestEnv) return;
-    try {
-      const dir = path.dirname(DB_FILE_PATH);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
-      }
-      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(store, null, 2), 'utf-8');
-    } catch (_e) {
-      // Ignore disk write errors
+    const dir = path.dirname(DB_FILE_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
     }
+    const tempPath = `${DB_FILE_PATH}.tmp`;
+    fs.writeFileSync(tempPath, JSON.stringify(store, null, 2), 'utf-8');
+    fs.renameSync(tempPath, DB_FILE_PATH);
   }
 
   loadFromDisk();
@@ -69,6 +68,22 @@ export function createFallbackStore() {
       }
       if (val && typeof val === 'object' && !Array.isArray(val) && !(val instanceof Date)) {
         const cond = val as any;
+        const toMs = (x: any) => (x instanceof Date ? x.getTime() : new Date(x).getTime());
+        if (cond.lte !== undefined || cond.lt !== undefined || cond.gte !== undefined || cond.gt !== undefined) {
+          const cur = item[key];
+          if (cur === null || cur === undefined) return false;
+          const c = typeof cur === 'number' ? cur : toMs(cur);
+          const cv = (x: any) => (typeof cur === 'number' ? x : toMs(x));
+          if (cond.lte !== undefined && !(c <= cv(cond.lte))) return false;
+          if (cond.lt !== undefined && !(c < cv(cond.lt))) return false;
+          if (cond.gte !== undefined && !(c >= cv(cond.gte))) return false;
+          if (cond.gt !== undefined && !(c > cv(cond.gt))) return false;
+          continue;
+        }
+        if (cond.not !== undefined) {
+          if (item[key] === cond.not) return false;
+          continue;
+        }
         if (cond.in && Array.isArray(cond.in)) {
           if (!cond.in.includes(item[key])) return false;
           continue;
@@ -96,14 +111,18 @@ export function createFallbackStore() {
 
   function sortItems(items: any[], orderBy?: any): any[] {
     if (!orderBy) return [...items];
-    const [field, dir] = Object.entries(orderBy)[0] || [];
-    if (!field) return [...items];
+    const orders = Array.isArray(orderBy) ? orderBy : [orderBy];
     return [...items].sort((a, b) => {
-      const av = a[field];
-      const bv = b[field];
-      if (av === bv) return 0;
-      const cmp = av > bv ? 1 : -1;
-      return dir === 'desc' ? -cmp : cmp;
+      for (const order of orders) {
+        const [field, dir] = Object.entries(order)[0] || [];
+        if (!field) continue;
+        const av = a[field];
+        const bv = b[field];
+        if (av === bv) continue;
+        const cmp = av > bv ? 1 : -1;
+        return dir === 'desc' ? -cmp : cmp;
+      }
+      return 0;
     });
   }
 
@@ -329,31 +348,94 @@ export function createFallbackStore() {
       connectedAccount: makeDelegate('connectedAccount'),
       oAuthToken: makeDelegate('oAuthToken'),
       telegramConnection: makeDelegate('telegramConnection'),
+      scheduledTask: makeDelegate('scheduledTask'),
+      $transaction: async (callback: (client: any) => Promise<any>) => {
+        const snapshot = JSON.parse(JSON.stringify(store));
+        try {
+          return await callback((fallbackInstance as any).client);
+        } catch (error) {
+          for (const key of Object.keys(store)) {
+            store[key] = snapshot[key];
+          }
+          saveToDisk();
+          throw error;
+        }
+      },
     },
   };
 }
 
 const fallbackInstance = createFallbackStore();
 
+
+export type StorageMode = 'postgres' | 'file';
+
+const RETRYABLE_PRISMA_CODES = new Set(['P1001', 'P1002', 'P1008', 'P1017', 'P2024']);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+let storageMode: StorageMode = 'file';
+let storageWarning: string | null = null;
+
+export function getStorageInfo(): { mode: StorageMode; durable: boolean; warning: string | null } {
+  return { mode: storageMode, durable: storageMode === 'postgres', warning: storageWarning };
+}
+
 function initPrismaClient(): any {
   const dbUrl = (process.env.DATABASE_URL || '').trim();
-  const hasExternalPostgres =
-    dbUrl.startsWith('postgres') &&
-    !dbUrl.includes('localhost:5432') &&
-    !dbUrl.includes('127.0.0.1:5432');
+  const isProd = process.env.NODE_ENV === 'production';
+  const isTest = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+  const hasPostgresUrl = dbUrl.startsWith('postgres');
+  const isLocalPostgres = dbUrl.includes('localhost:5432') || dbUrl.includes('127.0.0.1:5432');
+  const wantsPostgres = (hasPostgresUrl && (!isLocalPostgres || isProd)) || process.env.USE_POSTGRES === 'true';
 
-  if (hasExternalPostgres || process.env.USE_POSTGRES === 'true') {
+  if (wantsPostgres && !isTest) {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
       const PrismaModule = require('@prisma/client');
       if (PrismaModule && PrismaModule.PrismaClient) {
-        return new PrismaModule.PrismaClient({
+        const base = new PrismaModule.PrismaClient({
           log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
         });
+        // Retry transient connection failures (idle connections dropped by managed Postgres)
+        const client = base.$extends({
+          query: {
+            async $allOperations({ args, query }: any) {
+              let lastErr: any;
+              for (let attempt = 0; attempt < 4; attempt++) {
+                try {
+                  return await query(args);
+                } catch (err: any) {
+                  lastErr = err;
+                  const code = err?.code as string | undefined;
+                  const isInit = err?.name === 'PrismaClientInitializationError';
+                  if (!(isInit || (code && RETRYABLE_PRISMA_CODES.has(code)))) throw err;
+                  await sleep(250 * Math.pow(2, attempt));
+                }
+              }
+              throw lastErr;
+            },
+          },
+        });
+        storageMode = 'postgres';
+        console.log('🗄️  Storage: PostgreSQL (durable)');
+        return client;
       }
-    } catch (_err) {
-      // Fallback to built-in JSON store if Prisma client is not generated
+    } catch (err: any) {
+      storageWarning = `Prisma client unavailable (${err?.message || 'unknown'}). Falling back to local file storage.`;
     }
+  } else if (!isTest) {
+    storageWarning = hasPostgresUrl
+      ? 'DATABASE_URL points at localhost; using local file storage.'
+      : 'DATABASE_URL is not set; using local file storage.';
+  }
+
+  if (isProd && !isTest) {
+    storageWarning =
+      (storageWarning || 'Postgres not active.') +
+      ' Local file storage is EPHEMERAL on hosts like Render: conversations and connections are lost on restart. Set DATABASE_URL.';
+    console.error(`STORAGE WARNING: ${storageWarning}`);
+  } else if (storageWarning) {
+    console.warn(`Storage notice: ${storageWarning}`);
   }
   return fallbackInstance.client;
 }

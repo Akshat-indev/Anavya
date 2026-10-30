@@ -27,6 +27,7 @@ const GOOGLE_SCOPES = [
 ];
 
 const oauthStateStore: Map<string, { userId: string; expiresAt: number }> = new Map();
+const refreshInFlight = new Map<string, Promise<string>>();
 
 export class GoogleIntegrationService {
   public isOAuthConfigured(): boolean {
@@ -435,6 +436,19 @@ export class GoogleIntegrationService {
   }
 
   public async getValidAccessToken(userId: string): Promise<string> {
+    const pendingRefresh = refreshInFlight.get(userId);
+    if (pendingRefresh) return pendingRefresh;
+
+    const refreshPromise = this.refreshAccessTokenIfNeeded(userId);
+    refreshInFlight.set(userId, refreshPromise);
+    try {
+      return await refreshPromise;
+    } finally {
+      refreshInFlight.delete(userId);
+    }
+  }
+
+  private async refreshAccessTokenIfNeeded(userId: string): Promise<string> {
     const account = await this.resolveActiveGoogleAccount(userId);
 
     if (!account || account.status !== 'connected' || !account.oauthToken) {
@@ -482,6 +496,9 @@ export class GoogleIntegrationService {
         where: { id: tokenRecord.id },
         data: {
           encryptedAccessToken: encryptSecret(newAccessToken),
+          ...(refreshed.refresh_token
+            ? { encryptedRefreshToken: encryptSecret(refreshed.refresh_token) }
+            : {}),
           expiryDate: newExpiry,
         },
       });

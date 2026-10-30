@@ -4,10 +4,12 @@ services:
     env: node
     rootDir: backend
     plan: free
-    buildCommand: npm install --include=dev && npm run build
+    buildCommand: npm install --include=dev && npx prisma generate && npm run build && (npx prisma db push --skip-generate || echo "prisma db push skipped - set DATABASE_URL")
     startCommand: npm start
     healthCheckPath: /api/v1/health
     envVars:
+      - key: DATABASE_URL
+        sync: false
       - key: NODE_ENV
         value: production
       - key: PORT

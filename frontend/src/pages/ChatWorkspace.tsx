@@ -39,6 +39,7 @@ export const ChatWorkspace: React.FC = () => {
     workspaceFiles,
     isSending,
     liveBanner,
+    chatError,
     sendMessage,
     resolveApproval,
     fetchWorkspaceFiles,
@@ -355,8 +356,8 @@ export const ChatWorkspace: React.FC = () => {
                     onClick={() => {
                       setEditingApprovalId(approvalId);
                       setDraftEdits({
-                        recipient: args.recipient || 'client@example.com',
-                        subject: args.subject || 'Anavya Executive Report',
+                        recipient: args.recipient || '',
+                        subject: args.subject || '',
                         bodyDraft: args.bodyDraft || args.text || '',
                       });
                     }}
@@ -606,7 +607,7 @@ export const ChatWorkspace: React.FC = () => {
               <div className="flex items-center gap-2">
                 <AlertCircle className="w-4 h-4 text-[#EF6464]" />
                 <span className="text-xs font-semibold text-[#EF6464]">
-                  {msg.senderName || 'Execution Alert'}
+                  Execution issue
                 </span>
               </div>
               {renderStatusPill('failed')}
@@ -672,7 +673,7 @@ export const ChatWorkspace: React.FC = () => {
             <div className="flex items-center gap-2 min-w-0">
               <AgentAvatar role={msg.agentRole || 'coordinator'} size="sm" />
               <span className="text-xs font-semibold text-[#F5F5F5]">
-                {msg.senderName || 'Coordinator Agent'}
+                Anavya
               </span>
               {meta.subtitle && (
                 <span className="text-[11px] text-[#A0A0A0] truncate max-w-[260px]">
@@ -825,7 +826,7 @@ export const ChatWorkspace: React.FC = () => {
             <div className="my-3.5 max-w-[84%] bg-[#262626] border border-[#383838] rounded-2xl p-4 flex items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <Loader2 className="w-4 h-4 text-[#E9A23B] animate-spin shrink-0" />
-                <span className="text-xs text-[#F5F5F5]">{liveBanner}</span>
+                <span className="text-xs text-[#F5F5F5]">Working on your request...</span>
               </div>
               {renderStatusPill('running')}
             </div>
@@ -838,6 +839,11 @@ export const ChatWorkspace: React.FC = () => {
       {/* Bottom Fixed Chat Input Bar (Reference Image 2 style) */}
       <div className="px-6 pb-5 pt-2 bg-[#202020]">
         <div className="max-w-3xl mx-auto">
+        {chatError && (
+          <div className="mb-2 px-1 text-xs text-[#EF6464]" role="alert">
+            {chatError}
+          </div>
+        )}
           {(uploadNotice || workspaceFiles.length > 0) && (
             <div className="flex items-center justify-between mb-2 px-1">
               <div className="flex items-center gap-2 flex-wrap">

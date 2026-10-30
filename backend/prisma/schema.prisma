@@ -24,8 +24,40 @@ model User {
   connectedAccounts   ConnectedAccount[]
   oauthTokens         OAuthToken[]
   telegramConnections TelegramConnection[]
+  scheduledTasks      ScheduledTask[]
 
   @@index([email])
+}
+
+model ScheduledTask {
+  id              String    @id @default(uuid())
+  userId          String
+  conversationId  String?
+  title           String
+  objective       String    @db.Text
+  status          String    @default("scheduled") // scheduled | running | completed | failed | cancelled | paused
+  scheduleType    String    @default("once")      // once | interval | daily | weekly
+  runAt           DateTime?
+  nextRunAt       DateTime?
+  intervalMinutes Int?
+  timeOfDay       String?                         // "HH:MM" in the task timezone
+  daysOfWeek      Json?                           // [0..6], 0 = Sunday
+  timezone        String    @default("UTC")
+  lastRunAt       DateTime?
+  lastStatus      String?
+  lastError       String?   @db.Text
+  lastTaskId      String?
+  attempts        Int       @default(0)
+  maxAttempts     Int       @default(3)
+  runCount        Int       @default(0)
+  lockedAt        DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([status, nextRunAt])
 }
 
 model ChatConversation {
