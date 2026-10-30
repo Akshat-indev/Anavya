@@ -16,11 +16,35 @@ export const AuthPage: React.FC = () => {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const oauthToken = params.get('token');
+    const queryEmail = params.get('email');
+    const queryUid = params.get('uid');
     if (oauthToken) {
       window.history.replaceState({}, '', window.location.pathname);
-      localStorage.setItem('taskforce_token', oauthToken);
+      localStorage.setItem('taskforce_jwt', oauthToken);
+
+      // Decode JWT payload directly so login succeeds immediately
+      try {
+        const payloadPart = oauthToken.split('.')[1];
+        if (payloadPart) {
+          const decoded = JSON.parse(atob(payloadPart.replace(/-/g, '+').replace(/_/g, '/')));
+          if (decoded?.id && decoded?.email) {
+            setAuth({ id: decoded.id, email: decoded.email }, oauthToken);
+            return;
+          }
+        }
+      } catch {
+        // Fallback to query params or /auth/me
+      }
+
+      if (queryUid && queryEmail) {
+        setAuth({ id: queryUid, email: queryEmail }, oauthToken);
+        return;
+      }
+
       api
-        .get('/auth/me')
+        .get('/auth/me', {
+          headers: { Authorization: `Bearer ${oauthToken}` },
+        })
         .then((res) => {
           const user = res.data.data?.user;
           if (user) {
@@ -28,7 +52,7 @@ export const AuthPage: React.FC = () => {
           }
         })
         .catch(() => {
-          localStorage.removeItem('taskforce_token');
+          localStorage.removeItem('taskforce_jwt');
           setError('Failed to verify Google OAuth session.');
         });
     }

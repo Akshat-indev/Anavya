@@ -60,7 +60,9 @@ export class IntegrationController {
 
       if (req.headers.accept && req.headers.accept.includes('text/html')) {
         if (result?.isLogin && result?.token) {
-          return res.redirect(`${env.FRONTEND_URL}/?token=${encodeURIComponent(result.token)}`);
+          const emailParam = result.user?.email ? `&email=${encodeURIComponent(result.user.email)}` : '';
+          const idParam = result.user?.id ? `&uid=${encodeURIComponent(result.user.id)}` : '';
+          return res.redirect(`${env.FRONTEND_URL}/?token=${encodeURIComponent(result.token)}${emailParam}${idParam}`);
         }
         return res.redirect(`${env.FRONTEND_URL}/plugins?google=connected`);
       }
