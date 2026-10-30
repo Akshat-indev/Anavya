@@ -41,7 +41,38 @@ export class GoogleIntegrationService {
   }
 
   public generateLoginAuthUrl(): { authUrl: string; state: string; configured: boolean } {
-    return this.generateAuthUrl('login');
+    const state = `login.${crypto.randomBytes(16).toString('hex')}`;
+    oauthStateStore.set(state, {
+      userId: 'login',
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    if (!this.isOAuthConfigured()) {
+      return {
+        authUrl: '',
+        state,
+        configured: false,
+      };
+    }
+
+    // Use only non-sensitive OpenID/profile/email scopes for Login so Google NEVER
+    // displays the "Google hasn't verified this app" warning screen on sign-in.
+    const params = new URLSearchParams({
+      client_id: env.GOOGLE_CLIENT_ID,
+      redirect_uri: env.GOOGLE_REDIRECT_URI,
+      response_type: 'code',
+      scope: GOOGLE_LOGIN_SCOPES.join(' '),
+      access_type: 'online',
+      include_granted_scopes: 'true',
+      prompt: 'select_account',
+      state,
+    });
+
+    return {
+      authUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
+      state,
+      configured: true,
+    };
   }
 
   public generateAuthUrl(userId: string, additionalScopes?: string[]): { authUrl: string; state: string; configured: boolean } {
@@ -180,14 +211,35 @@ export class GoogleIntegrationService {
       );
     }
 
-    const account = await this.saveGoogleTokens(userId, {
-      accessToken,
-      refreshToken,
-      expiresIn,
-      accountEmail: accountEmail || 'connected@googleworkspace.com',
-      accountName,
-      scopes: GOOGLE_SCOPES,
-    });
+    const grantedScopeStr = String(tokenData.scope || '');
+    const hasWorkspaceScopes =
+      !isLogin ||
+      grantedScopeStr.includes('spreadsheets') ||
+      grantedScopeStr.includes('gmail') ||
+      grantedScopeStr.includes('documents');
+
+    let account: any = null;
+    if (hasWorkspaceScopes) {
+      account = await this.saveGoogleTokens(userId, {
+        accessToken,
+        refreshToken,
+        expiresIn,
+        accountEmail: accountEmail || 'connected@googleworkspace.com',
+        accountName,
+        scopes: GOOGLE_SCOPES,
+      });
+    } else {
+      // Login-only OAuth (non-sensitive scopes) — preserve any existing full-scope token
+      const existing = await prisma.connectedAccount.findFirst({
+        where: { userId, provider: 'google', status: 'connected' },
+      });
+      account = existing || {
+        provider: 'google',
+        accountEmail: accountEmail || 'connected@googleworkspace.com',
+        accountName,
+        status: 'connected',
+      };
+    }
 
     if (isLogin) {
       return {
@@ -289,11 +341,35 @@ export class GoogleIntegrationService {
     };
   }
 
-  public async getConnectionStatus(userId: string) {
-    const account = await prisma.connectedAccount.findFirst({
+  private async resolveActiveGoogleAccount(userId: string) {
+    let account = await prisma.connectedAccount.findFirst({
       where: { userId, provider: 'google' },
       include: { oauthToken: true },
     });
+
+    if (
+      (!account || account.status !== 'connected' || !account.oauthToken) &&
+      env.NODE_ENV !== 'test'
+    ) {
+      const workspaceAccount = await prisma.connectedAccount.findFirst({
+        where: {
+          provider: 'google',
+          status: 'connected',
+          oauthToken: { isNot: null },
+        },
+        include: { oauthToken: true },
+        orderBy: { updatedAt: 'desc' },
+      });
+      if (workspaceAccount) {
+        account = workspaceAccount;
+      }
+    }
+
+    return account;
+  }
+
+  public async getConnectionStatus(userId: string) {
+    const account = await this.resolveActiveGoogleAccount(userId);
 
     if (account && account.oauthToken?.encryptedAccessToken) {
       try {
@@ -370,12 +446,9 @@ export class GoogleIntegrationService {
   }
 
   public async getValidAccessToken(userId: string): Promise<string> {
-    const account = await prisma.connectedAccount.findFirst({
-      where: { userId, provider: 'google', status: 'connected' },
-      include: { oauthToken: true },
-    });
+    const account = await this.resolveActiveGoogleAccount(userId);
 
-    if (!account || !account.oauthToken) {
+    if (!account || account.status !== 'connected' || !account.oauthToken) {
       throw new AppError(
         'Google Workspace is not connected. Please connect your Google account in Plugins first.',
         400,

@@ -64,38 +64,53 @@ app.use('/api', apiLimiter);
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true, limit: '2mb' }));
 
-// Root status endpoint (useful for Render health checks, browser visits & Google Search Console verification)
+// Automatic Google Search Console HTML file verification handler (works for any googleXXXX.html file)
+app.get(/^\/(google[a-zA-Z0-9_-]+\.html)$/, (req, res) => {
+  const fileName = req.params[0];
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  return res.status(200).send(`google-site-verification: ${fileName}`);
+});
+
+// Root status endpoint (always serves HTML with verification meta tag for Googlebot & browsers)
 app.get('/', (req, res) => {
-  const verifyMeta = process.env.GOOGLE_SITE_VERIFICATION
-    ? `<meta name="google-site-verification" content="${process.env.GOOGLE_SITE_VERIFICATION}" />`
+  const rawVerify = (process.env.GOOGLE_SITE_VERIFICATION || '').trim();
+  let verifyContent = rawVerify;
+  const contentMatch = rawVerify.match(/content=["']([^"']+)["']/i);
+  if (contentMatch && contentMatch[1]) {
+    verifyContent = contentMatch[1];
+  }
+  const verifyMeta = verifyContent
+    ? `<meta name="google-site-verification" content="${verifyContent}" />`
     : '';
-  if (req.headers.accept && req.headers.accept.includes('text/html') && verifyMeta) {
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.send(`<!DOCTYPE html>
+
+  if (req.query.format === 'json') {
+    return res.json({
+      success: true,
+      name: 'Anavya Autonomous AI Workspace API',
+      tagline: 'Your AI workspace. Your agents. Your work, done.',
+      status: 'online',
+      docs: '/api-docs',
+      health: '/api/v1/health',
+      privacy: '/privacy',
+      terms: '/terms',
+    });
+  }
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  return res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   ${verifyMeta}
   <title>Anavya Autonomous AI Workspace</title>
 </head>
 <body style="background:#121212;color:#ECECEC;font-family:sans-serif;padding:40px;text-align:center;">
-  <h1>Anavya Autonomous AI Workspace API</h1>
+  <h1>Anavya Autonomous AI Workspace</h1>
   <p>Your AI workspace. Your agents. Your work, done.</p>
-  <p><a href="/privacy" style="color:#E9A23B;">Privacy Policy</a> • <a href="/terms" style="color:#E9A23B;">Terms of Service</a></p>
+  <p><a href="/privacy" style="color:#E9A23B;">Privacy Policy</a> • <a href="/terms" style="color:#E9A23B;">Terms of Service</a> • <a href="/api-docs" style="color:#E9A23B;">API Docs</a></p>
 </body>
 </html>`);
-  }
-
-  return res.json({
-    success: true,
-    name: 'Anavya Autonomous AI Workspace API',
-    tagline: 'Your AI workspace. Your agents. Your work, done.',
-    status: 'online',
-    docs: '/api-docs',
-    health: '/api/v1/health',
-    privacy: '/privacy',
-    terms: '/terms',
-  });
 });
 
 // Public Privacy Policy & Terms of Service pages (for Google OAuth Consent Screen)
