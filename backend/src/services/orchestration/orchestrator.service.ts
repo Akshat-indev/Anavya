@@ -166,8 +166,8 @@ export class OrchestratorService {
             type: 'execution_card',
             agentType: 'coordinator',
             title: 'Coordinator Agent',
-            subtitle: 'Creating execution plan.',
-            status: 'running',
+            subtitle: 'Execution plan ready',
+            status: 'completed',
           },
         });
       }
@@ -470,7 +470,12 @@ export class OrchestratorService {
           let actionLabel = `Executing ${t.toolName}`;
           let toolSummary = `Executed ${t.toolName} successfully.`;
 
-          if (t.toolName === 'google_sheets.read') {
+          if (t.toolName === 'google_sheets.create_spreadsheet') {
+            toolLabel = 'Google Sheets';
+            appName = 'Google Sheets';
+            actionLabel = `Creating spreadsheet "${t.output?.title || 'Spreadsheet'}"`;
+            toolSummary = `Created Google Sheet "${t.output?.title || t.output?.spreadsheetId}" with ${t.output?.updatedRows ?? 0} row(s).`;
+          } else if (t.toolName === 'google_sheets.read') {
             toolLabel = 'Google Sheets';
             appName = 'Google Sheets';
             actionLabel = `Reading spreadsheet "${t.output?.title || t.output?.spreadsheetId}"`;

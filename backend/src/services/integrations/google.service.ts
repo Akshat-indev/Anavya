@@ -41,34 +41,7 @@ export class GoogleIntegrationService {
   }
 
   public generateLoginAuthUrl(): { authUrl: string; state: string; configured: boolean } {
-    const state = `login.${crypto.randomBytes(16).toString('hex')}`;
-    oauthStateStore.set(state, {
-      userId: 'login',
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    });
-
-    if (!this.isOAuthConfigured()) {
-      return {
-        authUrl: '',
-        state,
-        configured: false,
-      };
-    }
-
-    const params = new URLSearchParams({
-      client_id: env.GOOGLE_CLIENT_ID,
-      redirect_uri: env.GOOGLE_REDIRECT_URI,
-      response_type: 'code',
-      scope: GOOGLE_LOGIN_SCOPES.join(' '),
-      prompt: 'select_account',
-      state,
-    });
-
-    return {
-      authUrl: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`,
-      state,
-      configured: true,
-    };
+    return this.generateAuthUrl('login');
   }
 
   public generateAuthUrl(userId: string, additionalScopes?: string[]): { authUrl: string; state: string; configured: boolean } {
@@ -205,12 +178,6 @@ export class GoogleIntegrationService {
         env.JWT_SECRET,
         { expiresIn: env.JWT_EXPIRES_IN as any }
       );
-
-      return {
-        isLogin: true,
-        token: jwtToken,
-        user: userRecord,
-      };
     }
 
     const account = await this.saveGoogleTokens(userId, {
@@ -221,6 +188,15 @@ export class GoogleIntegrationService {
       accountName,
       scopes: GOOGLE_SCOPES,
     });
+
+    if (isLogin) {
+      return {
+        isLogin: true,
+        token: jwtToken,
+        user: userRecord,
+        account,
+      };
+    }
 
     return account;
   }
@@ -626,6 +602,100 @@ export class GoogleIntegrationService {
   // GOOGLE SHEETS API METHODS
   // ==========================================
 
+  public async createSpreadsheet(
+    userId: string,
+    title: string,
+    values?: Array<Array<string | number>>,
+    meta?: { conversationId?: string; taskId?: string }
+  ) {
+    const accessToken = await this.getValidAccessToken(userId);
+    const createRes = await fetch('https://sheets.googleapis.com/v4/spreadsheets', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        properties: { title },
+      }),
+    });
+
+    if (!createRes.ok) {
+      const errText = await createRes.text();
+      throw new AppError(`Google Sheets creation failed: ${errText}`, createRes.status, 'GOOGLE_SHEETS_CREATE_ERROR');
+    }
+
+    const created: any = await createRes.json();
+    const spreadsheetId = created.spreadsheetId;
+    const spreadsheetUrl =
+      created.spreadsheetUrl || `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`;
+
+    let updatedRows = 0;
+    if (values && Array.isArray(values) && values.length > 0) {
+      try {
+        const appendRes = await this.appendRows(userId, spreadsheetId, 'Sheet1!A1', values);
+        updatedRows = appendRes.updatedRows || values.length;
+      } catch (_e) {
+        // Ignore if initial row population fails
+      }
+    }
+
+    const csvContent =
+      values && values.length > 0
+        ? values.map((r) => r.map((c) => String(c ?? '')).join(',')).join('\n')
+        : `Title,${title}`;
+    const safeFilename = `${title.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 60)}.csv`;
+    const localSaved = await workspaceService.writeGeneratedFile(userId, safeFilename, csvContent);
+
+    await prisma.workspaceFile.update({
+      where: { id: localSaved.id },
+      data: {
+        conversationId: meta?.conversationId || null,
+        taskId: meta?.taskId || null,
+        externalId: spreadsheetId,
+        externalUrl: spreadsheetUrl,
+      },
+    });
+
+    return {
+      success: true,
+      spreadsheetId,
+      title,
+      spreadsheetUrl,
+      updatedRows,
+      workspaceFileId: localSaved.id,
+    };
+  }
+
+  public async resolveSpreadsheetId(userId: string, spreadsheetIdOrName?: string): Promise<string> {
+    if (
+      spreadsheetIdOrName &&
+      spreadsheetIdOrName !== 'primary_sales_sheet' &&
+      spreadsheetIdOrName !== 'latest' &&
+      spreadsheetIdOrName.length > 20 &&
+      !spreadsheetIdOrName.includes(' ')
+    ) {
+      return spreadsheetIdOrName;
+    }
+
+    try {
+      const list = await this.listSpreadsheets(userId);
+      const sheets = list.spreadsheets || [];
+      if (spreadsheetIdOrName && spreadsheetIdOrName !== 'primary_sales_sheet' && spreadsheetIdOrName !== 'latest') {
+        const q = spreadsheetIdOrName.toLowerCase();
+        const match = sheets.find((s: any) => (s.title || s.name || '').toLowerCase().includes(q));
+        if (match) return match.spreadsheetId;
+      }
+      if (sheets.length > 0) {
+        return sheets[0].spreadsheetId;
+      }
+    } catch (_e) {
+      // Fallback
+    }
+
+    return spreadsheetIdOrName || 'primary_sales_sheet';
+  }
+
   public async listSpreadsheets(userId: string) {
     const accessToken = await this.getValidAccessToken(userId);
     const query = encodeURIComponent("mimeType='application/vnd.google-apps.spreadsheet' and trashed=false");
@@ -655,12 +725,13 @@ export class GoogleIntegrationService {
 
   public async readSpreadsheet(userId: string, spreadsheetId: string, range = 'Sheet1!A1:Z500') {
     const accessToken = await this.getValidAccessToken(userId);
+    const resolvedId = await this.resolveSpreadsheetId(userId, spreadsheetId);
     const [metaRes, valRes] = await Promise.all([
-      fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}?fields=spreadsheetId,properties.title,sheets.properties`, {
+      fetch(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(resolvedId)}?fields=spreadsheetId,properties.title,sheets.properties`, {
         headers: { Authorization: `Bearer ${accessToken}` },
       }),
       fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}`,
+        `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(resolvedId)}/values/${encodeURIComponent(range)}`,
         {
           headers: { Authorization: `Bearer ${accessToken}` },
         }
@@ -708,7 +779,8 @@ export class GoogleIntegrationService {
     values: Array<Array<string | number>>
   ) {
     const accessToken = await this.getValidAccessToken(userId);
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`;
+    const resolvedId = await this.resolveSpreadsheetId(userId, spreadsheetId);
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(resolvedId)}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED`;
 
     const res = await fetch(url, {
       method: 'POST',
@@ -726,7 +798,7 @@ export class GoogleIntegrationService {
 
     const data: any = await res.json();
     return {
-      spreadsheetId,
+      spreadsheetId: resolvedId,
       updatedRange: data.updates?.updatedRange || range,
       updatedRows: data.updates?.updatedRows || values.length,
     };
@@ -739,7 +811,8 @@ export class GoogleIntegrationService {
     values: Array<Array<string | number>>
   ) {
     const accessToken = await this.getValidAccessToken(userId);
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(spreadsheetId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
+    const resolvedId = await this.resolveSpreadsheetId(userId, spreadsheetId);
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(resolvedId)}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`;
 
     const res = await fetch(url, {
       method: 'PUT',
@@ -757,7 +830,7 @@ export class GoogleIntegrationService {
 
     const data: any = await res.json();
     return {
-      spreadsheetId,
+      spreadsheetId: resolvedId,
       updatedRange: data.updatedRange || range,
       updatedCells: data.updatedCells || 0,
     };

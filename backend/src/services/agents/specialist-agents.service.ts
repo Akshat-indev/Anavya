@@ -200,6 +200,7 @@ export const DEFAULT_AGENT_DEFINITIONS: AgentConfigurationSpec[] = [
       'file_reader',
       'google_drive.list_files',
       'google_drive.search_files',
+      'google_sheets.create_spreadsheet',
       'google_sheets.list_spreadsheets',
       'google_sheets.read',
       'google_sheets.append_rows',
@@ -260,6 +261,7 @@ export const DEFAULT_AGENT_DEFINITIONS: AgentConfigurationSpec[] = [
       'google_docs.create_document',
       'google_docs.append_content',
       'google_docs.update_content',
+      'google_sheets.create_spreadsheet',
       'gmail.create_draft',
       'gmail.send_message',
       'telegram.send_message',
@@ -655,6 +657,7 @@ export class SpecialistAgentService {
         'google_docs.append_content',
         'google_docs.update_content',
         'google_drive.upload_file',
+        'google_sheets.create_spreadsheet',
         'gmail.create_draft',
         'gmail.send_message',
         'approval_protected_action',
@@ -720,13 +723,24 @@ export class SpecialistAgentService {
         const prevOutputObj = context.previousOutputs[context.previousOutputs.length - 1]?.output;
         const prevDocUrl =
           prevOutputObj?.artifacts?.find((a: any) => a.externalUrl)?.externalUrl || '';
-        const prevSummary =
-          prevOutputObj?.summary || 'Your executive analysis report is ready in Anavya.';
+        const prevSummary = prevOutputObj?.summary || '';
 
         if (step.requiredTools.includes('telegram.send_message')) {
-          const textDraft = step.toolArguments?.text
-            ? `${step.toolArguments.text}${prevDocUrl ? `\n\nGoogle Docs Report: ${prevDocUrl}` : ''}`
-            : `Your sales analysis report is ready.${prevDocUrl ? `\n\nView Google Doc: ${prevDocUrl}` : `\n\n${prevSummary.slice(0, 300)}`}`;
+          let textDraft = step.toolArguments?.text || '';
+          if (!textDraft && !prevSummary && !geminiService.isMockMode()) {
+            const generated = await geminiService.executeAgentPrompt(
+              agentRole,
+              systemInstructions,
+              enrichedContext
+            );
+            textDraft = generated.text.slice(0, 1200);
+          } else if (!textDraft) {
+            textDraft = prevSummary
+              ? `${prevSummary.slice(0, 600)}${prevDocUrl ? `\n\nView Document: ${prevDocUrl}` : ''}`
+              : 'Your task update is ready.';
+          } else if (prevDocUrl && !textDraft.includes(prevDocUrl)) {
+            textDraft = `${textDraft}\n\nLink: ${prevDocUrl}`;
+          }
 
           const approvalOutput = await toolRegistryService.executeTool(
             'telegram.send_message',
@@ -766,11 +780,37 @@ export class SpecialistAgentService {
         }
 
         if (step.requiredTools.includes('gmail.send_message')) {
-          const recipient = step.toolArguments?.recipient || 'client@example.com';
-          const subject = step.toolArguments?.subject || 'Anavya Executive Summary & Report';
-          const bodyDraft =
-            step.toolArguments?.body ||
-            `${prevSummary}${prevDocUrl ? `\n\nGoogle Docs Report Link: ${prevDocUrl}` : ''}`;
+          const emailMatch = context.objective.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+          const recipient =
+            step.toolArguments?.recipient || emailMatch?.[1] || 'client@example.com';
+
+          let subject = step.toolArguments?.subject || '';
+          let bodyDraft = step.toolArguments?.body || '';
+
+          const isGenericPlaceholder =
+            !bodyDraft ||
+            bodyDraft === 'Your executive analysis report is ready in Anavya.' ||
+            subject === 'Anavya Executive Summary Report' ||
+            subject === 'Anavya Executive Summary & Report';
+
+          if (isGenericPlaceholder && !geminiService.isMockMode()) {
+            const generatedEmail = await geminiService.generateEmailDraft(
+              context.objective,
+              recipient,
+              prevSummary
+            );
+            subject = generatedEmail.subject;
+            bodyDraft =
+              generatedEmail.body +
+              (prevDocUrl && !generatedEmail.body.includes(prevDocUrl)
+                ? `\n\nDocument Link: ${prevDocUrl}`
+                : '');
+          } else {
+            subject = subject || 'Anavya Executive Summary & Report';
+            bodyDraft =
+              bodyDraft ||
+              `${prevSummary || 'Your executive analysis report is ready in Anavya.'}${prevDocUrl ? `\n\nGoogle Docs Report Link: ${prevDocUrl}` : ''}`;
+          }
 
           const approvalOutput = await toolRegistryService.executeTool(
             'gmail.send_message',
@@ -818,12 +858,21 @@ export class SpecialistAgentService {
             ? 'google_sheets.append_rows'
             : 'google_sheets.update_range';
 
+          let valuesToUse = step.toolArguments?.values;
+          if ((!Array.isArray(valuesToUse) || valuesToUse.length === 0) && !geminiService.isMockMode()) {
+            const generatedTable = await geminiService.generateSpreadsheetTable(
+              context.objective,
+              prevSummary
+            );
+            valuesToUse = generatedTable.values;
+          }
+
           const approvalOutput = await toolRegistryService.executeTool(
             sheetTool,
             {
-              spreadsheetId: step.toolArguments?.spreadsheetId || 'primary_sales_sheet',
+              spreadsheetId: step.toolArguments?.spreadsheetId || 'latest',
               range: step.toolArguments?.range || 'Sheet1!A1',
-              values: step.toolArguments?.values || [['Summary', prevSummary.slice(0, 120)]],
+              values: valuesToUse || [['Summary', (prevSummary || context.objective).slice(0, 120)]],
             },
             {
               userId: context.userId,
@@ -856,11 +905,26 @@ export class SpecialistAgentService {
           return result;
         }
 
+        const emailMatch = context.objective.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/);
+        const recipient = step.toolArguments?.recipient || emailMatch?.[1] || 'client@example.com';
+        let subject = step.toolArguments?.subject || '';
+        let bodyDraft = step.toolArguments?.bodyDraft || prevSummary || '';
+
+        if ((!bodyDraft || subject === 'Executive Summary Report') && !geminiService.isMockMode()) {
+          const generatedEmail = await geminiService.generateEmailDraft(
+            context.objective,
+            recipient,
+            prevSummary
+          );
+          subject = generatedEmail.subject;
+          bodyDraft = generatedEmail.body;
+        }
+
         const approvalArgs = {
           actionType: step.toolArguments?.actionType || 'send_email',
-          recipient: step.toolArguments?.recipient || 'client@example.com',
-          subject: step.toolArguments?.subject || 'Anavya Report Summary',
-          bodyDraft: prevSummary,
+          recipient,
+          subject: subject || 'Anavya Report Summary',
+          bodyDraft: bodyDraft || 'Your executive analysis report is ready in Anavya.',
           targetId: step.toolArguments?.targetId,
         };
 
@@ -881,7 +945,7 @@ export class SpecialistAgentService {
           agentType: agentRole,
           status: 'waiting_for_approval',
           summary: approvalOutput.message,
-          findings: { approvalOutput, bodyDraft: prevSummary },
+          findings: { approvalOutput, bodyDraft: approvalArgs.bodyDraft },
           approvalId: approvalOutput.approvalId,
           aiMode: geminiService.isMockMode() ? 'mock' : 'gemini',
         };
@@ -905,7 +969,49 @@ export class SpecialistAgentService {
         enrichedContext
       );
 
-      // 4. Execute post-generation artifact tools (Google Docs, Google Drive, Gmail Draft, or Workspace file_writer)
+      // 4. Execute post-generation artifact tools (Google Sheets Create, Google Docs, Google Drive, Gmail Draft, or Workspace file_writer)
+      if (step.requiredTools.includes('google_sheets.create_spreadsheet')) {
+        let sheetTitle = step.toolArguments?.title || '';
+        let sheetValues = step.toolArguments?.values;
+
+        if (!sheetTitle || !Array.isArray(sheetValues) || sheetValues.length === 0) {
+          const generatedTable = await geminiService.generateSpreadsheetTable(
+            context.objective,
+            aiResponse.text
+          );
+          sheetTitle = sheetTitle || generatedTable.title;
+          sheetValues =
+            Array.isArray(sheetValues) && sheetValues.length > 0
+              ? sheetValues
+              : generatedTable.values;
+        }
+
+        const sheetOutput = await toolRegistryService.executeTool(
+          'google_sheets.create_spreadsheet',
+          {
+            title: sheetTitle,
+            values: sheetValues,
+          },
+          {
+            userId: context.userId,
+            taskId: context.taskId,
+            conversationId: context.conversationId,
+            agentType: agentRole,
+          }
+        );
+
+        toolResults.push({ toolName: 'google_sheets.create_spreadsheet', output: sheetOutput });
+        artifacts.push({
+          fileId: sheetOutput.workspaceFileId || sheetOutput.spreadsheetId,
+          filename: `${sheetTitle}.xlsx`,
+          fileType: 'google_sheet',
+          size: JSON.stringify(sheetValues || []).length,
+          downloadUrl: sheetOutput.spreadsheetUrl,
+          externalUrl: sheetOutput.spreadsheetUrl,
+          documentId: sheetOutput.spreadsheetId,
+        });
+      }
+
       if (step.requiredTools.includes('google_docs.create_document')) {
         const docTitle =
           step.toolArguments?.title || `Anavya Report - ${new Date().toISOString().slice(0, 10)}`;

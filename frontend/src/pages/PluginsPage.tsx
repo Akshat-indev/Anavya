@@ -28,7 +28,7 @@ const PLUGINS: PluginItem[] = [
     id: 'google_drive',
     name: 'Google Drive',
     subtitle: 'Search, read, and upload workspace files',
-    description: 'Allows agents to search and read files in your Google Drive using Google OAuth 2.0.',
+    description: 'Allows agents to search, read, and upload files in your Google Drive.',
     categories: ['Productivity'],
     provider: 'google',
   },
@@ -36,15 +36,15 @@ const PLUGINS: PluginItem[] = [
     id: 'google_docs',
     name: 'Google Docs',
     subtitle: 'Create and edit formatted documents',
-    description: 'Creates real Google Docs reports and returns shareable links in chat.',
+    description: 'Creates and updates Google Docs reports and returns shareable links in chat.',
     categories: ['Productivity'],
     provider: 'google',
   },
   {
     id: 'google_sheets',
     name: 'Google Sheets',
-    subtitle: 'Read spreadsheets and append rows',
-    description: 'Reads live spreadsheet tabs and appends structured rows via Google Sheets API.',
+    subtitle: 'Create Excel spreadsheets, read tabs, and edit rows',
+    description: 'Creates new spreadsheets, reads live tabs, and updates rows via Google Sheets API.',
     categories: ['Productivity', 'Data & Analytics'],
     provider: 'google',
   },
@@ -60,14 +60,14 @@ const PLUGINS: PluginItem[] = [
     id: 'telegram',
     name: 'Telegram',
     subtitle: 'Receive real mobile notifications & alerts',
-    description: 'Delivers instant task summaries and approval alerts to your Telegram account via your Telegram Bot.',
+    description: 'Delivers instant task summaries and approval alerts to your Telegram account.',
     categories: ['Communication'],
     provider: 'telegram',
   },
   {
     id: 'csv_analyzer',
     name: 'CSV Data Analyzer',
-    subtitle: 'Built-in statistical engine for spreadsheets',
+    subtitle: 'Statistical engine for spreadsheets',
     description: 'Computes revenue totals, category rankings, and anomalies on uploaded CSV files.',
     categories: ['Data & Analytics'],
     provider: 'builtin',
@@ -75,7 +75,7 @@ const PLUGINS: PluginItem[] = [
   {
     id: 'web_research',
     name: 'Web Research',
-    subtitle: 'Built-in multi-source web synthesis',
+    subtitle: 'Multi-source web synthesis',
     description: 'Gathers market intelligence, competitor benchmarks, and factual citations.',
     categories: ['Research'],
     provider: 'builtin',
@@ -83,7 +83,7 @@ const PLUGINS: PluginItem[] = [
   {
     id: 'markdown_report',
     name: 'Report Generator',
-    subtitle: 'Built-in Markdown artifact builder',
+    subtitle: 'Markdown artifact builder',
     description: 'Produces downloadable Markdown reports in your workspace.',
     categories: ['Productivity'],
     provider: 'builtin',
@@ -91,6 +91,8 @@ const PLUGINS: PluginItem[] = [
 ];
 
 const CATEGORIES: CategoryType[] = ['All', 'Productivity', 'Communication', 'Data & Analytics', 'Research'];
+
+const STORAGE_KEY = 'anavya_plugin_toggles';
 
 export const PluginsPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
@@ -101,12 +103,40 @@ export const PluginsPage: React.FC = () => {
   const [telegramStatus, setTelegramStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
+  const [toggles, setToggles] = useState<Record<string, boolean>>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY);
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return {
+      google_drive: true,
+      google_docs: true,
+      google_sheets: true,
+      gmail: true,
+      telegram: true,
+      csv_analyzer: true,
+      web_research: true,
+      markdown_report: true,
+    };
+  });
+
   const [botTokenInput, setBotTokenInput] = useState('');
   const [chatIdInput, setChatIdInput] = useState('');
   const [showManualChatId, setShowManualChatId] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const saveToggleState = (next: Record<string, boolean>) => {
+    setToggles(next);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // ignore
+    }
+  };
 
   const loadStatuses = async () => {
     setLoading(true);
@@ -131,18 +161,40 @@ export const PluginsPage: React.FC = () => {
     loadStatuses();
     const params = new URLSearchParams(window.location.search);
     if (params.get('google') === 'connected') {
-      setFeedback({ type: 'success', text: 'Google Workspace connected via OAuth 2.0.' });
+      setFeedback({ type: 'success', text: 'Google account verified and enabled.' });
       window.history.replaceState({}, '', window.location.pathname);
     }
   }, []);
 
-  const isPluginConnected = (plugin: PluginItem): boolean => {
+  const isProviderVerified = (plugin: PluginItem): boolean => {
     if (plugin.provider === 'builtin') return true;
     if (plugin.provider === 'google') return Boolean(googleStatus?.connected);
     if (plugin.provider === 'telegram') {
       return Boolean(telegramStatus?.connected && telegramStatus?.linkedChatId);
     }
     return false;
+  };
+
+  const isPluginOn = (plugin: PluginItem): boolean => {
+    if (!isProviderVerified(plugin)) return false;
+    return toggles[plugin.id] !== false;
+  };
+
+  const handleTogglePlugin = (plugin: PluginItem, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setFeedback(null);
+
+    // If not verified yet, open the verification modal so user can verify first
+    if (!isProviderVerified(plugin)) {
+      setSelectedPlugin(plugin);
+      return;
+    }
+
+    const currentlyOn = isPluginOn(plugin);
+    saveToggleState({
+      ...toggles,
+      [plugin.id]: !currentlyOn,
+    });
   };
 
   const handleGoogleOAuthRedirect = async () => {
@@ -174,12 +226,12 @@ export const PluginsPage: React.FC = () => {
     setBusy(true);
     try {
       await api.delete('/integrations/google/disconnect');
-      setFeedback({ type: 'success', text: 'Google account disconnected.' });
+      setFeedback({ type: 'success', text: 'Google account unlinked.' });
       await loadStatuses();
     } catch (err: any) {
       setFeedback({
         type: 'error',
-        text: err?.response?.data?.message || 'Failed to disconnect Google.',
+        text: err?.response?.data?.message || 'Failed to unlink Google.',
       });
     } finally {
       setBusy(false);
@@ -194,12 +246,12 @@ export const PluginsPage: React.FC = () => {
       const count = (res.data.data?.files || []).length;
       setFeedback({
         type: 'success',
-        text: `Google API verified! Found ${count} accessible file(s) in your Google Drive.`,
+        text: `Verified! Found ${count} accessible file(s) in your Google Drive.`,
       });
     } catch (err: any) {
       setFeedback({
         type: 'error',
-        text: err?.response?.data?.message || 'Google API test failed. Reconnect via Google OAuth.',
+        text: err?.response?.data?.message || 'Google API test failed. Re-verify via Google OAuth.',
       });
     } finally {
       setBusy(false);
@@ -220,20 +272,21 @@ export const PluginsPage: React.FC = () => {
       await loadStatuses();
 
       if (result.linkedChatId) {
+        saveToggleState({ ...toggles, telegram: true });
         setFeedback({
           type: 'success',
-          text: `Connected to @${result.botUsername} and linked chat (${result.linkedChatTitle || result.linkedChatId}).`,
+          text: `Verified @${result.botUsername} (${result.linkedChatTitle || result.linkedChatId}) — Telegram is now ON.`,
         });
       } else {
         setFeedback({
           type: 'success',
-          text: `Bot @${result.botUsername} connected! Now click Step 2 below to open @${result.botUsername} in Telegram, tap Start, and click Verify.`,
+          text: `Bot @${result.botUsername} ready! Now click Step 1 below to open @${result.botUsername} in Telegram, tap Start, and click Verify.`,
         });
       }
     } catch (err: any) {
       setFeedback({
         type: 'error',
-        text: err?.response?.data?.message || 'Failed to connect Telegram bot. Check your BotFather token.',
+        text: err?.response?.data?.message || 'Failed to verify Telegram bot. Check your BotFather token.',
       });
     } finally {
       setBusy(false);
@@ -244,7 +297,6 @@ export const PluginsPage: React.FC = () => {
     setFeedback(null);
     setBusy(true);
     try {
-      // First re-run connect so backend auto-discovers chat_id from getUpdates (/start)
       const connectRes = await api.post('/integrations/telegram/connect', {
         chatId: chatIdInput.trim() || undefined,
       });
@@ -254,23 +306,25 @@ export const PluginsPage: React.FC = () => {
       if (!updated?.linkedChatId) {
         setFeedback({
           type: 'error',
-          text: `No message found from you yet. Please open @${updated?.botUsername || telegramStatus?.botUsername} in Telegram, tap "Start" (or send "hi"), and click Verify again.`,
+          text: `No message found from you yet. Please open @${updated?.botUsername || telegramStatus?.botUsername} in Telegram, tap "Start", and click Verify again.`,
         });
         setBusy(false);
         return;
       }
 
+      saveToggleState({ ...toggles, telegram: true });
+
       const sendRes = await api.post('/tools/telegram/send-message', {
-        text: '✅ Anavya Workspace connected! Your agents can now send real notifications to your Telegram.',
+        text: '✅ Anavya Workspace verified! Your agents can now send real notifications to your Telegram.',
       });
       setFeedback({
         type: 'success',
-        text: `Verified & delivered real Telegram message to ${updated.linkedChatTitle || updated.linkedChatId} (Message ID: ${sendRes.data.data?.messageId}). Check your Telegram app!`,
+        text: `Verified & delivered real Telegram message to ${updated.linkedChatTitle || updated.linkedChatId} (Message ID: ${sendRes.data.data?.messageId}).`,
       });
     } catch (err: any) {
       setFeedback({
         type: 'error',
-        text: err?.response?.data?.message || 'Telegram test failed.',
+        text: err?.response?.data?.message || 'Telegram verification failed.',
       });
     } finally {
       setBusy(false);
@@ -283,12 +337,12 @@ export const PluginsPage: React.FC = () => {
     try {
       await api.delete('/integrations/telegram/disconnect');
       setChatIdInput('');
-      setFeedback({ type: 'success', text: 'Telegram disconnected.' });
+      setFeedback({ type: 'success', text: 'Telegram unlinked.' });
       await loadStatuses();
     } catch (err: any) {
       setFeedback({
         type: 'error',
-        text: err?.response?.data?.message || 'Failed to disconnect Telegram.',
+        text: err?.response?.data?.message || 'Failed to unlink Telegram.',
       });
     } finally {
       setBusy(false);
@@ -314,7 +368,7 @@ export const PluginsPage: React.FC = () => {
           <div>
             <h1 className="text-xl font-semibold tracking-tight text-white">Plugins</h1>
             <p className="text-xs text-[#8E8E93] mt-1">
-              Connect real external accounts via Google OAuth 2.0 and Telegram Bot API.
+              Toggle workspace plugins on or off for your agents.
             </p>
           </div>
           <button
@@ -359,12 +413,10 @@ export const PluginsPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Plugins Grid */}
+        {/* Plugins Grid with Clean ON/OFF Toggle Switches */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {filteredPlugins.map((plugin) => {
-            const connected = isPluginConnected(plugin);
-            const partialTelegram =
-              plugin.provider === 'telegram' && telegramStatus?.connected && !telegramStatus?.linkedChatId;
+            const activeOn = isPluginOn(plugin);
 
             return (
               <div
@@ -380,33 +432,27 @@ export const PluginsPage: React.FC = () => {
                     <ApplicationIcon appOrTool={plugin.id} className="w-5 h-5" />
                   </div>
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-medium text-[#ECECEC] truncate">{plugin.name}</h3>
-                      {connected && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                          {plugin.provider === 'builtin' ? 'Built-in' : 'Connected'}
-                        </span>
-                      )}
-                      {partialTelegram && (
-                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                          Verify Chat
-                        </span>
-                      )}
-                    </div>
+                    <h3 className="text-sm font-medium text-[#ECECEC] truncate">{plugin.name}</h3>
                     <p className="text-xs text-[#8E8E93] truncate mt-0.5">{plugin.subtitle}</p>
                   </div>
                 </div>
 
+                {/* ON / OFF Toggle Switch */}
                 <button
                   type="button"
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium flex-shrink-0 transition ${
-                    connected
-                      ? 'bg-[#222222] text-[#A0A0A5] group-hover:text-white border border-[#2C2C2E]'
-                      : 'bg-[#ECECEC] text-[#121212] hover:bg-white'
+                  role="switch"
+                  aria-checked={activeOn}
+                  onClick={(e) => handleTogglePlugin(plugin, e)}
+                  className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    activeOn ? 'bg-[#36C99A]' : 'bg-[#2E2E30]'
                   }`}
+                  title={activeOn ? 'Turn Off' : 'Turn On'}
                 >
-                  {plugin.provider === 'builtin' ? 'Active' : connected ? 'Manage' : 'Connect'}
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm ring-0 transition duration-200 ease-in-out ${
+                      activeOn ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
                 </button>
               </div>
             );
@@ -414,7 +460,7 @@ export const PluginsPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Minimal, Uncluttered Plugin Modal */}
+      {/* Minimal Plugin Modal */}
       {selectedPlugin && (
         <div
           className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4"
@@ -431,23 +477,35 @@ export const PluginsPage: React.FC = () => {
                   <ApplicationIcon appOrTool={selectedPlugin.id} className="w-5 h-5" />
                 </div>
                 <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base font-semibold text-white">{selectedPlugin.name}</h2>
-                    {isPluginConnected(selectedPlugin) && (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                        Connected
-                      </span>
-                    )}
-                  </div>
+                  <h2 className="text-base font-semibold text-white">{selectedPlugin.name}</h2>
                   <p className="text-xs text-[#8E8E93] mt-0.5">{selectedPlugin.subtitle}</p>
                 </div>
               </div>
-              <button
-                onClick={() => setSelectedPlugin(null)}
-                className="p-1.5 rounded-lg text-[#8E8E93] hover:text-white hover:bg-[#242424]"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2.5">
+                {isProviderVerified(selectedPlugin) && (
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={isPluginOn(selectedPlugin)}
+                    onClick={(e) => handleTogglePlugin(selectedPlugin, e)}
+                    className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out ${
+                      isPluginOn(selectedPlugin) ? 'bg-[#36C99A]' : 'bg-[#2E2E30]'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-sm transition duration-200 ease-in-out ${
+                        isPluginOn(selectedPlugin) ? 'translate-x-5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                )}
+                <button
+                  onClick={() => setSelectedPlugin(null)}
+                  className="p-1.5 rounded-lg text-[#8E8E93] hover:text-white hover:bg-[#242424]"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
 
             {/* Modal Body */}
@@ -478,7 +536,7 @@ export const PluginsPage: React.FC = () => {
                     <div className="p-3.5 rounded-xl bg-[#121212] border border-[#262626] space-y-3">
                       <div className="flex items-center justify-between">
                         <div>
-                          <div className="text-[11px] text-[#8E8E93]">Connected Google Account</div>
+                          <div className="text-[11px] text-[#8E8E93]">Verified Google Account</div>
                           <div className="text-xs font-medium text-white mt-0.5">
                             {googleStatus.accountEmail}
                           </div>
@@ -489,7 +547,7 @@ export const PluginsPage: React.FC = () => {
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 text-xs transition"
                         >
                           <Unlink className="w-3 h-3" />
-                          Disconnect
+                          Unlink
                         </button>
                       </div>
                       <button
@@ -497,7 +555,7 @@ export const PluginsPage: React.FC = () => {
                         disabled={busy}
                         className="w-full py-2 rounded-lg bg-[#222222] hover:bg-[#2A2A2C] text-xs font-medium text-[#ECECEC] transition"
                       >
-                        {busy ? 'Testing...' : 'Verify Google API Access'}
+                        {busy ? 'Testing...' : 'Test Google Access'}
                       </button>
                     </div>
                   ) : (
@@ -508,19 +566,8 @@ export const PluginsPage: React.FC = () => {
                         className="w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-white hover:bg-neutral-200 text-[#121212] font-medium text-xs transition disabled:opacity-50"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
-                        {busy ? 'Redirecting to Google...' : 'Sign in with Google (OAuth 2.0)'}
+                        {busy ? 'Redirecting to Google...' : 'Verify with Google Account'}
                       </button>
-
-                      {!googleStatus?.oauthConfiguredOnServer && (
-                        <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-200/90 space-y-1">
-                          <div className="font-medium text-amber-300">Setup Required in backend/.env</div>
-                          <p className="text-[#A0A0A5]">
-                            Add <code className="text-amber-200">GOOGLE_CLIENT_ID</code> and{' '}
-                            <code className="text-amber-200">GOOGLE_CLIENT_SECRET</code> from Google Cloud Console to{' '}
-                            <code className="text-amber-200">backend/.env</code>.
-                          </p>
-                        </div>
-                      )}
                     </div>
                   )}
                 </div>
@@ -529,7 +576,6 @@ export const PluginsPage: React.FC = () => {
               {/* TELEGRAM PLUGIN */}
               {selectedPlugin.provider === 'telegram' && (
                 <div className="space-y-3">
-                  {/* Step 1: Connect Bot */}
                   {!telegramStatus?.connected ? (
                     <form onSubmit={handleConnectTelegramBot} className="space-y-3">
                       {telegramStatus?.serverBotConfigured ? (
@@ -538,12 +584,12 @@ export const PluginsPage: React.FC = () => {
                           disabled={busy}
                           className="w-full py-2.5 px-4 rounded-xl bg-[#2AABEE] hover:bg-[#229ED9] text-white font-medium text-xs transition"
                         >
-                          {busy ? 'Connecting Bot...' : 'Connect Telegram Bot (from .env)'}
+                          {busy ? 'Enabling Bot...' : 'Enable Telegram Bot'}
                         </button>
                       ) : (
                         <div className="space-y-2">
                           <label className="block text-[11px] font-medium text-[#A0A0A5]">
-                            Step 1: Paste Telegram Bot Token (from @BotFather) or set TELEGRAM_BOT_TOKEN in backend/.env
+                            Paste Telegram Bot Token (from @BotFather)
                           </label>
                           <div className="flex gap-2">
                             <input
@@ -558,23 +604,22 @@ export const PluginsPage: React.FC = () => {
                               disabled={busy || !botTokenInput.trim()}
                               className="px-3.5 py-2 rounded-lg bg-[#2AABEE] hover:bg-[#229ED9] text-white font-medium text-xs transition disabled:opacity-50"
                             >
-                              {busy ? '...' : 'Connect'}
+                              {busy ? '...' : 'Verify'}
                             </button>
                           </div>
                         </div>
                       )}
                     </form>
                   ) : (
-                    /* Step 2: Verify User Chat & Test */
                     <div className="p-3.5 rounded-xl bg-[#121212] border border-[#262626] space-y-3">
                       <div className="flex items-center justify-between">
                         <div>
-                          <div className="text-[11px] text-[#8E8E93]">Connected Bot</div>
+                          <div className="text-[11px] text-[#8E8E93]">Telegram Bot</div>
                           <div className="text-xs font-medium text-white mt-0.5">
                             @{telegramStatus.botUsername}
                             {telegramStatus.linkedChatId && (
                               <span className="text-emerald-400 ml-1.5">
-                                • Linked ({telegramStatus.linkedChatTitle || telegramStatus.linkedChatId})
+                                • {telegramStatus.linkedChatTitle || telegramStatus.linkedChatId}
                               </span>
                             )}
                           </div>
@@ -585,15 +630,11 @@ export const PluginsPage: React.FC = () => {
                           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-300 text-xs transition"
                         >
                           <Unlink className="w-3 h-3" />
-                          Disconnect
+                          Unlink
                         </button>
                       </div>
 
                       <div className="pt-2 border-t border-[#222222] space-y-2">
-                        <div className="text-[11px] text-[#A0A0A5]">
-                          Telegram bots can only message you after you tap <b>Start</b> in the bot chat:
-                        </div>
-
                         <div className="grid grid-cols-1 gap-2">
                           <a
                             href={`https://t.me/${telegramStatus.botUsername}?start=connect`}
@@ -612,7 +653,7 @@ export const PluginsPage: React.FC = () => {
                             className="w-full flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg bg-[#2AABEE] hover:bg-[#229ED9] text-xs font-medium text-white transition disabled:opacity-50"
                           >
                             <Send className="w-3.5 h-3.5" />
-                            {busy ? 'Verifying & Sending...' : '2. Verify & Send Real Test Message'}
+                            {busy ? 'Verifying & Sending...' : '2. Verify & Send Test Message'}
                           </button>
                         </div>
 
@@ -644,9 +685,9 @@ export const PluginsPage: React.FC = () => {
 
               {/* BUILT-IN PLUGINS */}
               {selectedPlugin.provider === 'builtin' && (
-                <div className="p-3 rounded-xl bg-[#121212] border border-[#262626] flex items-center gap-2 text-xs text-emerald-400">
-                  <CheckCircle2 className="w-4 h-4 flex-shrink-0" />
-                  <span>Built-in core tool — active automatically in all chats.</span>
+                <div className="p-3 rounded-xl bg-[#121212] border border-[#262626] flex items-center gap-2 text-xs text-[#A0A0A5]">
+                  <CheckCircle2 className="w-4 h-4 text-[#36C99A] flex-shrink-0" />
+                  <span>Use the toggle switch above to turn this plugin on or off.</span>
                 </div>
               )}
             </div>

@@ -307,6 +307,35 @@ export class ToolRegistryService {
     // 6. GOOGLE SHEETS TOOLS
     // ==========================================
     this.registerTool({
+      name: 'google_sheets.create_spreadsheet',
+      description:
+        'Create a new Google Spreadsheet (Excel sheet) in the user Google Workspace account and populate it with header and data rows.',
+      inputSchema: z.object({
+        title: z.string().min(1),
+        values: z.array(z.array(z.union([z.string(), z.number()]))).optional(),
+      }),
+      outputSchema: z.object({
+        success: z.boolean(),
+        spreadsheetId: z.string(),
+        title: z.string(),
+        spreadsheetUrl: z.string(),
+        updatedRows: z.number().optional(),
+        workspaceFileId: z.string().optional(),
+      }),
+      requiredPermissions: ['coordinator', 'analyst', 'writer', 'developer'],
+      requiresApproval: false,
+      timeoutMs: 20000,
+      execute: async (input, context) => {
+        return googleIntegrationService.createSpreadsheet(
+          context.userId,
+          input.title,
+          input.values,
+          { conversationId: context.conversationId, taskId: context.taskId }
+        );
+      },
+    });
+
+    this.registerTool({
       name: 'google_sheets.list_spreadsheets',
       description: 'List accessible Google Spreadsheets in the authenticated user Google Workspace account.',
       inputSchema: z.object({}),

@@ -36,7 +36,6 @@ export const ChatWorkspace: React.FC = () => {
     conversations,
     activeConversationId,
     messages,
-    integrations,
     workspaceFiles,
     isSending,
     liveBanner,
@@ -411,7 +410,7 @@ export const ChatWorkspace: React.FC = () => {
             {output.documentUrl && (
               <div className="mt-2.5 pt-2.5 border-t border-[#323232] flex items-center justify-between">
                 <span className="text-xs text-[#A0A0A0] truncate">
-                  Google Doc ID: {output.documentId}
+                  {output.title || `Google Doc ID: ${output.documentId}`}
                 </span>
                 <a
                   href={output.documentUrl}
@@ -420,6 +419,24 @@ export const ChatWorkspace: React.FC = () => {
                   className="inline-flex items-center gap-1.5 text-xs text-[#E9A23B] hover:underline font-medium"
                 >
                   <span>Open in Google Docs</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              </div>
+            )}
+
+            {/* Google Sheets Direct Link */}
+            {output.spreadsheetUrl && (
+              <div className="mt-2.5 pt-2.5 border-t border-[#323232] flex items-center justify-between">
+                <span className="text-xs text-[#A0A0A0] truncate">
+                  {output.title || `Google Sheet ID: ${output.spreadsheetId}`}
+                </span>
+                <a
+                  href={output.spreadsheetUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs text-[#36C99A] hover:underline font-medium"
+                >
+                  <span>Open in Google Sheets</span>
                   <ExternalLink className="w-3.5 h-3.5" />
                 </a>
               </div>
@@ -665,6 +682,8 @@ export const ChatWorkspace: React.FC = () => {
                   >
                     {art.fileType === 'google_doc' ? (
                       <GoogleDocsIcon className="w-3.5 h-3.5" />
+                    ) : art.fileType === 'google_sheet' ? (
+                      <GoogleSheetsIcon className="w-3.5 h-3.5" />
                     ) : art.fileType === 'google_drive' ? (
                       <GoogleDriveIcon className="w-3.5 h-3.5" />
                     ) : (
@@ -727,8 +746,7 @@ export const ChatWorkspace: React.FC = () => {
               </div>
             </div>
             <span className="hidden lg:inline text-[11px] text-[#A0A0A0]">
-              {integrations.google.connected ? 'Google Connected' : 'Google Ready'} •{' '}
-              {integrations.telegram.connected ? 'Telegram On' : 'Telegram Off'}
+              Plugins
             </span>
           </button>
 

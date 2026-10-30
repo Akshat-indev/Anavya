@@ -247,15 +247,8 @@ export class GeminiService {
       (lower.includes('email') && integrationStatus?.googleConnected);
     const wantsTelegram = lower.includes('telegram');
 
-    // Deterministic multi-tool orchestration plan when user explicitly asks for Google Drive / Sheets / Docs / Gmail / Telegram or in mock mode
-    if (
-      this.isMockMode() ||
-      wantsGoogleDrive ||
-      wantsGoogleSheets ||
-      wantsGoogleDocs ||
-      wantsGmail ||
-      wantsTelegram
-    ) {
+    // Deterministic multi-tool orchestration plan ONLY in mock/test mode
+    if (this.isMockMode()) {
       const steps: any[] = [];
       let seq = 1;
 
@@ -446,25 +439,33 @@ export class GeminiService {
     const systemPrompt = `You are the Coordinator Agent for Anavya, an autonomous AI workspace.
 Create a concise, valid JSON execution plan (maximum 8 steps) to fulfill the user's objective.
 Available specialist agentType values: "researcher", "analyst", "writer", "developer".
-Available registered tools:
+Available registered tools (ONLY use tool names from this exact list):
 - "web_research": internet search (arguments: { "query": "string" })
 - "file_reader": read workspace file (arguments: { "filename": "string" })
 - "file_writer": write report/artifact to workspace (arguments: { "filename": "string", "fileType": "md" | "txt" | "json" | "csv" })
 - "csv_analyzer": deterministic CSV analysis for totals, averages, top-N rankings (arguments: { "filename": "string", "topN": 5 })
 - "google_drive.list_files": list files in Google Drive (arguments: {})
 - "google_drive.search_files": search Google Drive files (arguments: { "query": "string" })
-- "google_drive.upload_file": upload file to Google Drive (arguments: { "filename": "string", "content": "string" })
+- "google_drive.upload_file": create or upload a file in Google Drive (arguments: { "filename": "string", "content": "string" })
+- "google_sheets.create_spreadsheet": create a brand new Google Sheet / Excel spreadsheet with table rows (arguments: { "title": "string", "values": [["Col1", "Col2"], ["Val1", "Val2"]] })
 - "google_sheets.list_spreadsheets": list Google Sheets (arguments: {})
 - "google_sheets.read": read Google Sheet range (arguments: { "spreadsheetId": "string", "range": "Sheet1!A1:F100" })
-- "google_sheets.append_rows": append rows to Google Sheet (arguments: { "spreadsheetId": "string", "range": "Sheet1!A1", "values": [[]] })
-- "google_sheets.update_range": update cells in Google Sheet (arguments: { "spreadsheetId": "string", "range": "Sheet1!A1:B2", "values": [[]] })
-- "google_docs.create_document": create a Google Doc report (arguments: { "title": "string", "content": "string" })
+- "google_sheets.append_rows": add/append rows to an existing Google Sheet (arguments: { "spreadsheetId": "latest", "range": "Sheet1!A1", "values": [["Val1", "Val2"]] })
+- "google_sheets.update_range": edit/update cells in an existing Google Sheet (arguments: { "spreadsheetId": "latest", "range": "Sheet1!A1:B2", "values": [["Val1", "Val2"]] })
+- "google_docs.create_document": create a Google Doc with title and content (arguments: { "title": "string", "content": "string" })
+- "google_docs.update_content": edit/update an existing Google Doc (arguments: { "documentId": "string", "content": "string" })
 - "gmail.list_messages": list recent Gmail messages (arguments: { "maxResults": 10 })
 - "gmail.search_messages": search Gmail messages (arguments: { "query": "string" })
 - "gmail.create_draft": create a Gmail draft without sending (arguments: { "recipient": "string", "subject": "string", "body": "string" })
-- "gmail.send_message": send an email via Gmail after human approval (arguments: { "recipient": "string", "subject": "string", "body": "string" })
-- "telegram.send_message": send Telegram message after approval (arguments: { "text": "string" })
-- "approval_protected_action": required whenever sending emails, publishing content, deleting files, or updating external records (arguments: { "actionType": "send_email" | "publish_content" | "delete_file" | "external_update", "recipient": "string", "subject": "string" })
+- "gmail.send_message": send an email via Gmail after human approval — ALWAYS include a real, specific "recipient", "subject", and complete well-written "body" matching the user's request! (arguments: { "recipient": "string", "subject": "string", "body": "string" })
+- "telegram.send_message": send a Telegram message after approval (arguments: { "text": "string" })
+- "approval_protected_action": required when sending emails if Gmail is not connected (arguments: { "actionType": "send_email", "recipient": "string", "subject": "string", "bodyDraft": "string" })
+
+Rules:
+1. If the user asks to send an email (or mentions an email address like foo@gmail.com), use "gmail.send_message" with agentType "writer", and write the actual email subject and full email body in toolArguments!
+2. If the user asks to create an Excel / spreadsheet / Google Sheet, use "google_sheets.create_spreadsheet" with agentType "analyst" or "writer", and include realistic header + data rows in toolArguments.values!
+3. If the user asks to edit/update a spreadsheet, use "google_sheets.append_rows" or "google_sheets.update_range".
+4. If the user asks to create a Google Doc or write a document in Drive, use "google_docs.create_document" or "google_drive.upload_file" with agentType "writer".
 
 Return strictly JSON matching this schema:
 {
@@ -490,10 +491,126 @@ Relevant User Memories: ${JSON.stringify(memories)}`;
       userPrompt,
       executionPlanSchema as any,
       systemPrompt,
-      1500
+      2048
     );
 
     return { plan: data as ExecutionPlan, aiMode };
+  }
+
+  public async generateEmailDraft(
+    objective: string,
+    recipient: string,
+    previousSummary?: string
+  ): Promise<{ subject: string; body: string }> {
+    if (this.isMockMode()) {
+      return {
+        subject: 'Anavya Executive Summary Report',
+        body: previousSummary || 'Your executive analysis report is ready in Anavya.',
+      };
+    }
+
+    try {
+      const prompt = `Write a complete, polished, ready-to-send email that fulfills this exact user request:
+User Request: "${objective}"
+Recipient: ${recipient}
+${previousSummary ? `Additional Context / Findings from previous steps:\n${previousSummary}\n` : ''}
+
+Return strictly valid JSON with two keys:
+{
+  "subject": "Clear, engaging, specific subject line for this email",
+  "body": "The full, well-formatted plain-text email body (do not use placeholder brackets like [Your Name] if you can sign off naturally or use the sender's context)"
+}`;
+      const raw = await this.callGeminiWithTimeout(
+        prompt,
+        'You are the Writer Agent for Anavya. Write authentic, complete, high-quality emails tailored to the user prompt.',
+        1200,
+        'application/json'
+      );
+      const parsed = JSON.parse(
+        raw
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim()
+      );
+      if (parsed?.subject && parsed?.body) {
+        return {
+          subject: String(parsed.subject).trim(),
+          body: String(parsed.body).trim(),
+        };
+      }
+    } catch (_e) {
+      // Fallback below
+    }
+
+    const fallbackRes = await this.generateResponse(
+      `Write the complete email body for: ${objective}${previousSummary ? `\nContext: ${previousSummary}` : ''}`,
+      'Write only the email body text, ready to send.',
+      1000
+    );
+    return {
+      subject: objective.slice(0, 70),
+      body: fallbackRes.text,
+    };
+  }
+
+  public async generateSpreadsheetTable(
+    objective: string,
+    previousSummary?: string
+  ): Promise<{ title: string; values: Array<Array<string | number>> }> {
+    if (this.isMockMode()) {
+      return {
+        title: 'Anavya Generated Sheet',
+        values: [
+          ['Item', 'Category', 'Value'],
+          ['Sample 1', 'General', 100],
+        ],
+      };
+    }
+
+    try {
+      const prompt = `Create a structured spreadsheet table (headers in row 1, followed by at least 5 realistic data rows) that fulfills this user request:
+User Request: "${objective}"
+${previousSummary ? `Context / Findings:\n${previousSummary}\n` : ''}
+
+Return strictly valid JSON matching this format:
+{
+  "title": "Short descriptive spreadsheet title",
+  "values": [
+    ["Column 1", "Column 2", "Column 3", "Column 4"],
+    ["Row 1 Col 1", "Row 1 Col 2", 100, "Notes"]
+  ]
+}`;
+      const raw = await this.callGeminiWithTimeout(
+        prompt,
+        'You are the Analyst Agent for Anavya. Generate accurate, structured spreadsheet tables.',
+        1500,
+        'application/json'
+      );
+      const parsed = JSON.parse(
+        raw
+          .replace(/^```json\s*/i, '')
+          .replace(/^```\s*/i, '')
+          .replace(/```\s*$/i, '')
+          .trim()
+      );
+      if (parsed?.title && Array.isArray(parsed?.values) && parsed.values.length > 0) {
+        return {
+          title: String(parsed.title).trim(),
+          values: parsed.values,
+        };
+      }
+    } catch (_e) {
+      // Fallback
+    }
+
+    return {
+      title: objective.slice(0, 50) || 'Anavya Spreadsheet',
+      values: [
+        ['Name', 'Category', 'Details', 'Status'],
+        ['Item 1', 'Primary', objective.slice(0, 60), 'Active'],
+      ],
+    };
   }
 
   public async executeAgentPrompt(
